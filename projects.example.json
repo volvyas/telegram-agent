@@ -1,0 +1,27 @@
+{
+  "projects": {
+    "motor": {
+      "name": "Motor Backend",
+      "path": "/home/user/projects/motor-backend",
+      "testCommand": {
+        "executable": "./mvnw",
+        "args": ["test"]
+      },
+      "buildCommand": {
+        "executable": "./mvnw",
+        "args": ["package", "-DskipTests"]
+      },
+      "branch": "main",
+      "allowedOperations": ["task", "status", "git", "diff", "test", "build", "stop", "commit"]
+    },
+    "detective": {
+      "name": "Detective Bot",
+      "path": "/home/user/projects/detective-bot",
+      "testCommand": {
+        "executable": "npm",
+        "args": ["test"]
+      },
+      "allowedOperations": ["task", "status", "git", "diff", "test", "stop"]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+.env
+projects.json
+
+node_modules/
+dist/
+coverage/
+
+data/
+logs/
+*.log
+
+.idea/
+*.iml
+.DS_Store
+*.tmp
