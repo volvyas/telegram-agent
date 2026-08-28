@@ -16,6 +16,17 @@ export type {
   AgentWarningEvent,
 } from "./AgentEvent.js";
 export type { AgentRun } from "./AgentRun.js";
+export type { AgentSession } from "../domain/AgentSession.js";
+export {
+  AgentManager,
+  AgentManagerError,
+} from "./AgentManager.js";
+export type {
+  AgentEventListener,
+  AgentManagerOptions,
+  AgentProjectRegistry,
+  AgentStatus,
+} from "./AgentManager.js";
 export {
   AGENT_STATES,
   AGENT_TRANSITION_REASONS,

@@ -235,7 +235,7 @@ transition.
 **Виконано 2026-08-27:** transition-by-reason state machine; tests покривають
 усю allowed matrix, повний lifecycle і кожну заборонену пару state/reason.
 
-### [ ] DEV-012 — Реалізувати MVP `AgentManager`
+### [x] DEV-012 — Реалізувати MVP `AgentManager`
 
 **Залежить від:** DEV-006, DEV-008, DEV-011. **Клас:** `AgentManager`.
 
@@ -245,6 +245,9 @@ project. На цьому кроці достатньо in-memory session state. 
 
 **Готово, коли:** tests з mock `CodingAgent` перевіряють lifecycle, events,
 помилку запуску та per-project concurrency lock.
+
+**Виконано 2026-08-28:** in-memory session/status, streamed event lifecycle,
+immutable snapshots, per-project operation lock і паралельність різних projects.
 
 ### [ ] DEV-013 — Створити Telegram bot bootstrap та whitelist guard
 
