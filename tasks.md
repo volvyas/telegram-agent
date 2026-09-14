@@ -249,7 +249,7 @@ project. На цьому кроці достатньо in-memory session state. 
 **Виконано 2026-08-28:** in-memory session/status, streamed event lifecycle,
 immutable snapshots, per-project operation lock і паралельність різних projects.
 
-### [ ] DEV-013 — Створити Telegram bot bootstrap та whitelist guard
+### [x] DEV-013 — Створити Telegram bot bootstrap та whitelist guard
 
 **Класи:** `TelegramBot`, `AuthGuard`.
 
@@ -260,7 +260,11 @@ ID для command, text і callback; неавторизованому корис
 **Готово, коли:** unit tests доводять, що unauthorized update не проходить далі,
 а token не потрапляє в логи.
 
-### [ ] DEV-014 — Реалізувати вибір активного проєкту
+**Виконано 2026-09-14:** додано exact-pinned `grammy`, long-polling bootstrap,
+перший у chain whitelist middleware для messages/callbacks і sanitized error
+logging; unit/integration tests блокують unauthorized updates до handlers.
+
+### [x] DEV-014 — Реалізувати вибір активного проєкту
 
 **Класи:** `CommandRouter`, `ProjectHandler`, `ProjectKeyboard`.
 
@@ -270,6 +274,10 @@ opaque/validated project ID, а не path.
 
 **Готово, коли:** користувач бачить список, обирає project і отримує dashboard;
 невідомий project обробляється без падіння; handler tests проходять.
+
+**Виконано 2026-09-14:** `/start`, `/projects`, `/project <id>`, inline project
+keyboard з opaque callback tokens, validated selection і in-memory active project
+per Telegram user; dashboard та unknown-project paths покриті tests.
 
 ### [ ] DEV-015 — Реалізувати `/task` і доставку фінального результату
 
