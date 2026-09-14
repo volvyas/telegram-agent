@@ -1,9 +1,15 @@
+import { Application } from "./app/Application.js";
+
 export const APPLICATION_NAME = "codex-remote";
 
-export function main(): void {
-  console.log(`${APPLICATION_NAME} foundation is ready`);
+export async function main(): Promise<void> {
+  const application = await Application.create();
+  await application.start();
 }
 
 if (import.meta.main) {
-  main();
+  void main().catch(() => {
+    console.error("Application failed.");
+    process.exitCode = 1;
+  });
 }

@@ -1,11 +1,16 @@
 import type { Update, UserFromGetMe } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 
+import { AgentManager } from "../../src/agent/AgentManager.js";
+import type { AgentEvent } from "../../src/agent/AgentEvent.js";
+import type { AgentRun } from "../../src/agent/AgentRun.js";
+import type { AgentStartOptions, CodingAgent } from "../../src/agent/CodingAgent.js";
 import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 import type { ProjectManager } from "../../src/projects/ProjectManager.js";
 import { AuthGuard } from "../../src/telegram/AuthGuard.js";
 import { CommandRouter } from "../../src/telegram/CommandRouter.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
+import { TaskHandler } from "../../src/telegram/handlers/TaskHandler.js";
 import { TelegramBot } from "../../src/telegram/TelegramBot.js";
 
 const BOT_INFO: UserFromGetMe = {
@@ -55,7 +60,71 @@ describe("TelegramBot", () => {
     expect(logger.error).toHaveBeenCalledWith("Telegram update handling failed.");
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(token);
   });
+
+  it("runs the mocked project-selection to task-result flow end to end", async () => {
+    const manager = projectManager();
+    const projectHandler = new ProjectHandler(manager);
+    const agent = new CompletingAgent();
+    const taskHandler = new TaskHandler(new AgentManager(agent, manager), projectHandler);
+    const sentMessages: string[] = [];
+    const bot = new TelegramBot({
+      token: "123456:test-token",
+      authGuard: new AuthGuard(new Set([42])),
+      commandRouter: new CommandRouter(projectHandler, taskHandler),
+      botConfig: {
+        botInfo: BOT_INFO,
+        client: { fetch: recordingFetch(sentMessages) },
+      },
+    });
+
+    await bot.handleUpdate(commandUpdate(42, "/project api"));
+    await bot.handleUpdate(commandUpdate(42, "/task Keep $HOME exactly; echo nope"));
+
+    expect(agent.starts[0]).toMatchObject({
+      projectId: "api",
+      workingDirectory: "/private/api",
+      prompt: "Keep $HOME exactly; echo nope",
+    });
+    expect(sentMessages).toContain("Task started for API.");
+    expect(sentMessages).toContain("Task completed.\nAll done");
+  });
 });
+
+class CompletingAgent implements CodingAgent {
+  public readonly starts: AgentStartOptions[] = [];
+
+  public start(options: AgentStartOptions): Promise<AgentRun> {
+    this.starts.push(options);
+    return Promise.resolve({
+      projectId: options.projectId,
+      runId: "RUN-E2E",
+      events: completedEvents(options.projectId),
+    });
+  }
+
+  public resume(): Promise<AgentRun> {
+    throw new Error("Not implemented");
+  }
+
+  public send(): Promise<AgentRun> {
+    throw new Error("Not implemented");
+  }
+
+  public stop(): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+}
+
+async function* completedEvents(projectId: string): AsyncIterable<AgentEvent> {
+  await Promise.resolve();
+  yield {
+    type: "completed",
+    projectId,
+    runId: "RUN-E2E",
+    occurredAt: "2026-09-14T00:00:00Z",
+    summary: "All done",
+  };
+}
 
 function createBot(projectHandler: ProjectHandler, apiCalls: string[]): TelegramBot {
   return new TelegramBot({
@@ -85,15 +154,41 @@ function fakeFetch(apiCalls: string[]): typeof fetch {
   });
 }
 
+function recordingFetch(messages: string[]): typeof fetch {
+  return vi.fn((input: string | URL | Request, init?: RequestInit) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    const method = url.slice(url.lastIndexOf("/") + 1);
+    if (method === "sendMessage" && typeof init?.body === "string") {
+      const payload = JSON.parse(init.body) as { readonly text?: unknown };
+      if (typeof payload.text === "string") messages.push(payload.text);
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ ok: true, result: telegramMessage("sent") }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  });
+}
+
 function commandUpdate(userId: number, text: string): Update {
   return {
     update_id: 1,
     message: {
       ...telegramMessage(text),
       from: { id: userId, is_bot: false, first_name: "User" },
-      entities: [{ type: "bot_command", offset: 0, length: text.length }],
+      entities: [{ type: "bot_command", offset: 0, length: commandLength(text) }],
     },
   };
+}
+
+function commandLength(text: string): number {
+  const whitespace = text.search(/\s/u);
+  return whitespace < 0 ? text.length : whitespace;
 }
 
 function telegramMessage(text: string) {
@@ -115,5 +210,9 @@ function projectManager(): ProjectManager {
   return {
     list: () => [configuredProject],
     get: (projectId: string) => projectId === "api" ? configuredProject : undefined,
+    require: (projectId: string) => {
+      if (projectId !== "api") throw new Error("Project not found");
+      return configuredProject;
+    },
   } as unknown as ProjectManager;
 }

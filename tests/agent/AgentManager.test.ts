@@ -207,10 +207,44 @@ describe("AgentManager", () => {
     });
     expect(agent.starts).toEqual([]);
   });
+
+  it("requests cancellation for every active run during shutdown", async () => {
+    const gates = new Map([
+      ["motor", deferredEvents()],
+      ["crypto", deferredEvents()],
+    ]);
+    const agent = new FakeCodingAgent((options) => run(
+      options.projectId,
+      `RUN-${options.projectId}`,
+      requireGate(gates, options.projectId).events,
+    ));
+    const manager = createManager(agent);
+    const operations = [
+      manager.startTask("motor", "Task"),
+      manager.startTask("crypto", "Task"),
+    ];
+    await vi.waitFor(() => {
+      expect(manager.getStatus("motor").runId).toBe("RUN-motor");
+      expect(manager.getStatus("crypto").runId).toBe("RUN-crypto");
+    });
+
+    const stopped = manager.stopAll();
+    await vi.waitFor(() => {
+      expect(agent.stops).toEqual(expect.arrayContaining(["RUN-motor", "RUN-crypto"]));
+    });
+    expect(agent.stops).toEqual(expect.arrayContaining(["RUN-motor", "RUN-crypto"]));
+    for (const [projectId, gate] of gates) {
+      gate.push(event("stopped", projectId, `RUN-${projectId}`, { reason: "shutdown" }));
+      gate.end();
+    }
+    await stopped;
+    await Promise.all(operations);
+  });
 });
 
 class FakeCodingAgent implements CodingAgent {
   public readonly starts: AgentStartOptions[] = [];
+  public readonly stops: string[] = [];
   readonly #start: (options: AgentStartOptions) => AgentRun | Promise<AgentRun>;
 
   public constructor(start: (options: AgentStartOptions) => AgentRun | Promise<AgentRun>) {
@@ -230,8 +264,9 @@ class FakeCodingAgent implements CodingAgent {
     throw new Error("Not implemented");
   }
 
-  public stop(): Promise<boolean> {
-    return Promise.resolve(false);
+  public stop(runId: string): Promise<boolean> {
+    this.stops.push(runId);
+    return Promise.resolve(true);
   }
 }
 

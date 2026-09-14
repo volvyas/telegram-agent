@@ -48,6 +48,8 @@ interface ManagedSession {
 
 interface ActiveOperation {
   readonly token: symbol;
+  readonly finished: Promise<void>;
+  readonly finish: () => void;
   runId?: string;
 }
 
@@ -102,7 +104,7 @@ export class AgentManager {
       );
     }
 
-    const operation: ActiveOperation = { token: Symbol(projectId) };
+    const operation = createActiveOperation(projectId);
     this.#activeOperations.set(projectId, operation);
     const session = this.#beginSession(project);
 
@@ -143,6 +145,7 @@ export class AgentManager {
         this.#activeOperations.delete(projectId);
       }
       this.#updateSnapshot(session, { activeRunId: undefined });
+      operation.finish();
     }
   }
 
@@ -161,6 +164,16 @@ export class AgentManager {
   public getSession(projectId: string): AgentSession | undefined {
     this.#projects.require(projectId);
     return this.#sessions.get(projectId)?.snapshot;
+  }
+
+  /** Requests cancellation for every run currently owned by this manager. */
+  public async stopAll(): Promise<void> {
+    const operations = [...this.#activeOperations.values()];
+    const runIds = operations
+      .map((operation) => operation.runId)
+      .filter((runId): runId is string => runId !== undefined);
+    await Promise.all(runIds.map((runId) => this.#agent.stop(runId)));
+    await Promise.all(operations.map((operation) => operation.finished));
   }
 
   #beginSession(project: ProjectConfig): ManagedSession {
@@ -281,4 +294,12 @@ export class AgentManager {
     }
     session.snapshot = Object.freeze(next);
   }
+}
+
+function createActiveOperation(projectId: string): ActiveOperation {
+  let finish = (): void => undefined;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  return { token: Symbol(projectId), finished, finish };
 }

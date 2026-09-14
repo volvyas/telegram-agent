@@ -279,7 +279,7 @@ opaque/validated project ID, а не path.
 keyboard з opaque callback tokens, validated selection і in-memory active project
 per Telegram user; dashboard та unknown-project paths покриті tests.
 
-### [ ] DEV-015 — Реалізувати `/task` і доставку фінального результату
+### [x] DEV-015 — Реалізувати `/task` і доставку фінального результату
 
 **Класи:** `TaskHandler`, доповнення `CommandRouter`, `AgentManager`.
 
@@ -290,7 +290,11 @@ active project задачу не запускати. Зв'язати agent event
 **Готово, коли:** mocked end-to-end test проходить шлях update → selected project
 → Codex prompt → final Telegram message; prompt не потрапляє в shell string.
 
-### [ ] DEV-016 — Зібрати application composition root
+**Виконано 2026-09-14:** `/task <text>` і двокроковий `/task` → text,
+перевірка active project, bounded prompt та started/completed/failed delivery;
+mocked Telegram → project → agent → final-message flow зберігає prompt дослівно.
+
+### [x] DEV-016 — Зібрати application composition root
 
 **Класи:** `Application`, `src/index.ts`.
 
@@ -300,6 +304,11 @@ shutdown для SIGINT/SIGTERM, закриття bot та активних пр�
 
 **Готово, коли:** Phase 1 запускається локально з example config, build і всі
 tests зелені; вручну перевірений сценарій select project → task → result.
+
+**Виконано 2026-09-14:** `Application.create()` збирає config, projects, Codex
+adapter, agent manager, handlers і Telegram bot; SIGINT/SIGTERM ідемпотентно
+abort-ять та очікують active runs перед зупинкою polling. Composition і mocked
+Phase 1 flow перевірені автоматично; live smoke потребує локальних bot credentials.
 
 ---
 
