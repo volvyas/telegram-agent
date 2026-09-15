@@ -314,7 +314,7 @@ Phase 1 flow перевірені автоматично; live smoke потре�
 
 ## Phase 2 — persistent sessions і двосторонній діалог
 
-### [ ] DEV-017 — Визначити storage interface і схему даних
+### [x] DEV-017 — Визначити storage interface і схему даних
 
 **Класи:** `Storage`, records для active projects, sessions, tasks і sequence.
 
@@ -324,7 +324,11 @@ Phase 1 flow перевірені автоматично; live smoke потре�
 **Готово, коли:** contract tests можна запускати проти будь-якої реалізації
 storage; схема задокументована в `docs/architecture.md`.
 
-### [ ] DEV-018 — Реалізувати `JsonStorage`
+**Виконано 2026-09-15:** додано backend-neutral `Storage`, versioned immutable
+state для active projects, sessions, tasks і sequence, reusable contract tests
+та документацію schema v1 й atomic update semantics.
+
+### [x] DEV-018 — Реалізувати `JsonStorage`
 
 **Клас:** `JsonStorage implements Storage`.
 
@@ -334,7 +338,11 @@ storage; схема задокументована в `docs/architecture.md`.
 **Готово, коли:** contract tests покривають restart persistence, concurrent
 updates та corrupted file; runtime data не потрапляє в Git.
 
-### [ ] DEV-019 — Реалізувати persistent `SessionManager`
+**Виконано 2026-09-15:** `JsonStorage` із serialized updates, temp file + fsync +
+atomic rename, автоматичним створенням data directory, restart persistence та
+окремими safe errors для damaged/unsupported state; `data/` ігнорується Git.
+
+### [x] DEV-019 — Реалізувати persistent `SessionManager`
 
 **Класи:** `AgentSession`, `SessionManager`.
 
@@ -343,6 +351,10 @@ session відновлюється лише в тому самому canonical r
 
 **Готово, коли:** tests доводять ізоляцію двох projects і відновлення session
 після створення нового instance manager.
+
+**Виконано 2026-09-15:** додано storage-backed `SessionManager`, окремі thread
+ID/state per project, захист від restore у repository з іншим canonical path і
+reconciliation orphaned `RUNNING` → `FAILED`; tests покривають ізоляцію та restart.
 
 ### [ ] DEV-020 — Додати resume до `CodexAdapter`
 

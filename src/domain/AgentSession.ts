@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentRunId, AgentThreadId } from "../agent/AgentEvent.js";
 import type { AgentState } from "../agent/AgentState.js";
 
-/** In-memory view of one project's agent conversation. */
+/** Runtime view of one project's agent conversation. Transient fields are not persisted. */
 export interface AgentSession {
   readonly projectId: string;
   readonly projectPath: string;
