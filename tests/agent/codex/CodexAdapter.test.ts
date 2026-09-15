@@ -68,7 +68,12 @@ describe("CodexAdapter", () => {
   });
 
   it("resumes and sends messages to the requested persisted thread", async () => {
-    const thread = new FakeThread(completedEvents);
+    const resumedEvents = completedEvents.map((event) =>
+      event.type === "thread.started"
+        ? { ...event, thread_id: "THREAD-OLD" }
+        : event,
+    );
+    const thread = new FakeThread(resumedEvents, "THREAD-DECOY");
     const client = new FakeClient(thread);
     const adapter = createAdapter(client);
 
@@ -78,6 +83,7 @@ describe("CodexAdapter", () => {
       threadId: "THREAD-OLD",
       prompt: "Continue",
     });
+    expect(adapter.getThreadId("motor")).toBeUndefined();
     await collect(resumed.events);
     const answer = await adapter.send({
       projectId: "motor",
@@ -87,13 +93,56 @@ describe("CodexAdapter", () => {
     });
     await collect(answer.events);
 
-    expect(client.resumeCalls).toHaveLength(2);
-    expect(client.resumeCalls.map((call) => call.threadId)).toEqual([
-      "THREAD-OLD",
-      "THREAD-OLD",
+    expect(client.startCalls).toEqual([]);
+    expect(client.resumeCalls).toEqual([
+      {
+        threadId: "THREAD-OLD",
+        options: {
+          threadSource: "codex-remote",
+          workingDirectory: "/projects/motor",
+          sandboxMode: "workspace-write",
+          approvalPolicy: "never",
+          networkAccessEnabled: false,
+          webSearchMode: "disabled",
+          skipGitRepoCheck: false,
+          additionalDirectories: [],
+        },
+      },
+      {
+        threadId: "THREAD-OLD",
+        options: {
+          threadSource: "codex-remote",
+          workingDirectory: "/projects/motor",
+          sandboxMode: "workspace-write",
+          approvalPolicy: "never",
+          networkAccessEnabled: false,
+          webSearchMode: "disabled",
+          skipGitRepoCheck: false,
+          additionalDirectories: [],
+        },
+      },
     ]);
     expect(thread.inputs).toEqual(["Continue", "Use existing JWT"]);
-    expect(adapter.getThreadId("motor")).toBe("THREAD-1");
+    expect(adapter.getThreadId("motor")).toBe("THREAD-OLD");
+  });
+
+  it("rejects a structured thread ID that differs from the requested resume ID", async () => {
+    const adapter = createAdapter(new FakeClient(new FakeThread(completedEvents)));
+    const run = await adapter.resume({
+      projectId: "motor",
+      workingDirectory: "/projects/motor",
+      threadId: "THREAD-OLD",
+      prompt: "Continue",
+    });
+
+    await expect(collect(run.events)).resolves.toEqual([
+      expect.objectContaining({
+        type: "error",
+        fatal: true,
+        message: "Codex event stream ended unexpectedly",
+      }),
+    ]);
+    expect(adapter.getThreadId("motor")).toBeUndefined();
   });
 
   it("aborts an active SDK stream and emits one stopped event", async () => {
@@ -280,13 +329,14 @@ class ThrowingFakeClient implements CodexClientPort {
 }
 
 class FakeThread implements CodexThreadPort {
-  public readonly id: string | null = null;
+  public readonly id: string | null;
   public readonly inputs: string[] = [];
   public readonly signals: AbortSignal[] = [];
   readonly #events: readonly ThreadEvent[];
 
-  public constructor(events: readonly ThreadEvent[]) {
+  public constructor(events: readonly ThreadEvent[], id: string | null = null) {
     this.#events = events;
+    this.id = id;
   }
 
   public runStreamed(

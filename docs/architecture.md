@@ -240,6 +240,70 @@ JSON обрано замість SQLite, бо gateway single-process, обсяг
 потребує queries чи native dependency. Рішення переглядається при multi-process
 deployment або значному task history.
 
+### Storage schema v1
+
+`Storage` оперує цілим immutable snapshot і надає `load`, serialized atomic
+`update(mutator)` та `close`. Mutator отримує ізольований snapshot і повертає
+повний новий state; якщо mutator, validation або disk write завершується
+помилкою, попередній state лишається чинним. Це contract-level семантика й вона
+не залежить від JSON backend.
+
+```json
+{
+  "schemaVersion": 1,
+  "activeProjects": {
+    "123456": {
+      "projectId": "motor",
+      "updatedAt": "2026-09-15T10:00:00.000Z"
+    }
+  },
+  "sessions": {
+    "motor": {
+      "projectId": "motor",
+      "projectPath": "/canonical/path/to/motor",
+      "state": "COMPLETED",
+      "threadId": "thread-id",
+      "startedAt": "2026-09-15T09:55:00.000Z",
+      "updatedAt": "2026-09-15T10:00:00.000Z"
+    }
+  },
+  "tasks": [{
+    "id": "TASK-0001",
+    "projectId": "motor",
+    "promptSummary": "Bounded non-secret summary",
+    "status": "completed",
+    "createdAt": "2026-09-15T09:55:00.000Z",
+    "updatedAt": "2026-09-15T10:00:00.000Z"
+  }],
+  "sequence": { "nextTaskNumber": 2 }
+}
+```
+
+Ключ `activeProjects` — decimal Telegram user ID, ключ `sessions` — validated
+project ID. Усі timestamps — canonical UTC ISO 8601 (`Date#toISOString`).
+`projectPath` потрібен для перевірки repository identity при resume; config усе
+одно лишається authoritative. `nextTaskNumber` — наступний ще не виданий suffix.
+
+`JsonStorage` створює data directory, серіалізує operations у межах process,
+пише в unique temporary file у тому самому directory, виконує file `fsync`,
+atomic rename і directory `fsync`. Malformed v1 state має категорію
+`STORAGE_DAMAGED`, інша numeric version — `STORAGE_UNSUPPORTED_VERSION`; такі
+файли не перезаписуються автоматично.
+
+### Persistent sessions
+
+`SessionManager` є application-level власником persisted session records. Він
+отримує project тільки з validated `ProjectManager`, тому порівнює збережений
+`projectPath` з уже canonical configured repository path перед поверненням
+thread ID. Невідповідність має safe error `SESSION_REPOSITORY_MISMATCH`: стара
+сесія не відновлюється і не переприв'язується до нового repository автоматично.
+
+Кожен project ID має рівно один незалежний record із власними `threadId`,
+`state`, `startedAt` та `updatedAt`. Runtime-only `activeRunId` і `lastEvent` не
+persist-яться. Під час першого читання після restart збережений `RUNNING`
+атомарно reconcile-иться в `FAILED`, бо process уже не належить новому runtime;
+`threadId` при цьому зберігається для контрольованого resume.
+
 ## Security boundaries
 
 ### Telegram

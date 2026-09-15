@@ -89,6 +89,23 @@ describe("ConfigLoader", () => {
     expect(config.codexHome).toBeUndefined();
   });
 
+  it("uses an environment snapshot taken at construction time", async () => {
+    const cwd = await createTemporaryDirectory();
+    const environment: NodeJS.ProcessEnv = {
+      TELEGRAM_BOT_TOKEN: "123:original-token",
+      TELEGRAM_ALLOWED_USER_IDS: "10",
+    };
+    const loader = new ConfigLoader(environment, cwd);
+
+    environment.TELEGRAM_BOT_TOKEN = "456:changed-token";
+    environment.TELEGRAM_ALLOWED_USER_IDS = "20";
+
+    const config = loader.loadAppConfig();
+
+    expect(config.telegramBotToken).toBe("123:original-token");
+    expect([...config.telegramAllowedUserIds]).toEqual([10]);
+  });
+
   it.each([
     [{ TELEGRAM_ALLOWED_USER_IDS: "1" }, "TELEGRAM_BOT_TOKEN"],
     [

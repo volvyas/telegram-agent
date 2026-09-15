@@ -235,7 +235,7 @@ transition.
 **Виконано 2026-08-27:** transition-by-reason state machine; tests покривають
 усю allowed matrix, повний lifecycle і кожну заборонену пару state/reason.
 
-### [ ] DEV-012 — Реалізувати MVP `AgentManager`
+### [x] DEV-012 — Реалізувати MVP `AgentManager`
 
 **Залежить від:** DEV-006, DEV-008, DEV-011. **Клас:** `AgentManager`.
 
@@ -246,7 +246,10 @@ project. На цьому кроці достатньо in-memory session state. 
 **Готово, коли:** tests з mock `CodingAgent` перевіряють lifecycle, events,
 помилку запуску та per-project concurrency lock.
 
-### [ ] DEV-013 — Створити Telegram bot bootstrap та whitelist guard
+**Виконано 2026-08-28:** in-memory session/status, streamed event lifecycle,
+immutable snapshots, per-project operation lock і паралельність різних projects.
+
+### [x] DEV-013 — Створити Telegram bot bootstrap та whitelist guard
 
 **Класи:** `TelegramBot`, `AuthGuard`.
 
@@ -257,7 +260,11 @@ ID для command, text і callback; неавторизованому корис
 **Готово, коли:** unit tests доводять, що unauthorized update не проходить далі,
 а token не потрапляє в логи.
 
-### [ ] DEV-014 — Реалізувати вибір активного проєкту
+**Виконано 2026-09-14:** додано exact-pinned `grammy`, long-polling bootstrap,
+перший у chain whitelist middleware для messages/callbacks і sanitized error
+logging; unit/integration tests блокують unauthorized updates до handlers.
+
+### [x] DEV-014 — Реалізувати вибір активного проєкту
 
 **Класи:** `CommandRouter`, `ProjectHandler`, `ProjectKeyboard`.
 
@@ -268,7 +275,11 @@ opaque/validated project ID, а не path.
 **Готово, коли:** користувач бачить список, обирає project і отримує dashboard;
 невідомий project обробляється без падіння; handler tests проходять.
 
-### [ ] DEV-015 — Реалізувати `/task` і доставку фінального результату
+**Виконано 2026-09-14:** `/start`, `/projects`, `/project <id>`, inline project
+keyboard з opaque callback tokens, validated selection і in-memory active project
+per Telegram user; dashboard та unknown-project paths покриті tests.
+
+### [x] DEV-015 — Реалізувати `/task` і доставку фінального результату
 
 **Класи:** `TaskHandler`, доповнення `CommandRouter`, `AgentManager`.
 
@@ -279,7 +290,11 @@ active project задачу не запускати. Зв'язати agent event
 **Готово, коли:** mocked end-to-end test проходить шлях update → selected project
 → Codex prompt → final Telegram message; prompt не потрапляє в shell string.
 
-### [ ] DEV-016 — Зібрати application composition root
+**Виконано 2026-09-14:** `/task <text>` і двокроковий `/task` → text,
+перевірка active project, bounded prompt та started/completed/failed delivery;
+mocked Telegram → project → agent → final-message flow зберігає prompt дослівно.
+
+### [x] DEV-016 — Зібрати application composition root
 
 **Класи:** `Application`, `src/index.ts`.
 
@@ -290,11 +305,16 @@ shutdown для SIGINT/SIGTERM, закриття bot та активних пр�
 **Готово, коли:** Phase 1 запускається локально з example config, build і всі
 tests зелені; вручну перевірений сценарій select project → task → result.
 
+**Виконано 2026-09-14:** `Application.create()` збирає config, projects, Codex
+adapter, agent manager, handlers і Telegram bot; SIGINT/SIGTERM ідемпотентно
+abort-ять та очікують active runs перед зупинкою polling. Composition і mocked
+Phase 1 flow перевірені автоматично; live smoke потребує локальних bot credentials.
+
 ---
 
 ## Phase 2 — persistent sessions і двосторонній діалог
 
-### [ ] DEV-017 — Визначити storage interface і схему даних
+### [x] DEV-017 — Визначити storage interface і схему даних
 
 **Класи:** `Storage`, records для active projects, sessions, tasks і sequence.
 
@@ -304,7 +324,11 @@ tests зелені; вручну перевірений сценарій select 
 **Готово, коли:** contract tests можна запускати проти будь-якої реалізації
 storage; схема задокументована в `docs/architecture.md`.
 
-### [ ] DEV-018 — Реалізувати `JsonStorage`
+**Виконано 2026-09-15:** додано backend-neutral `Storage`, versioned immutable
+state для active projects, sessions, tasks і sequence, reusable contract tests
+та документацію schema v1 й atomic update semantics.
+
+### [x] DEV-018 — Реалізувати `JsonStorage`
 
 **Клас:** `JsonStorage implements Storage`.
 
@@ -314,7 +338,11 @@ storage; схема задокументована в `docs/architecture.md`.
 **Готово, коли:** contract tests покривають restart persistence, concurrent
 updates та corrupted file; runtime data не потрапляє в Git.
 
-### [ ] DEV-019 — Реалізувати persistent `SessionManager`
+**Виконано 2026-09-15:** `JsonStorage` із serialized updates, temp file + fsync +
+atomic rename, автоматичним створенням data directory, restart persistence та
+окремими safe errors для damaged/unsupported state; `data/` ігнорується Git.
+
+### [x] DEV-019 — Реалізувати persistent `SessionManager`
 
 **Класи:** `AgentSession`, `SessionManager`.
 
@@ -324,7 +352,11 @@ session відновлюється лише в тому самому canonical r
 **Готово, коли:** tests доводять ізоляцію двох projects і відновлення session
 після створення нового instance manager.
 
-### [ ] DEV-020 — Додати resume до `CodexAdapter`
+**Виконано 2026-09-15:** додано storage-backed `SessionManager`, окремі thread
+ID/state per project, захист від restore у repository з іншим canonical path і
+reconciliation orphaned `RUNNING` → `FAILED`; tests покривають ізоляцію та restart.
+
+### [x] DEV-020 — Додати resume до `CodexAdapter`
 
 **Залежить від:** DEV-002, DEV-019. **Клас:** доповнення `CodexAdapter`.
 
@@ -334,6 +366,13 @@ session відновлюється лише в тому самому canonical r
 
 **Готово, коли:** tests перевіряють точні args/protocol для new і resumed run,
 а ручний smoke test підтверджує продовження контексту.
+
+**Виконано 2026-09-15:** persisted project thread автоматично обирає SDK
+`resumeThread(threadId, lockedDownOptions)` замість `startThread`; thread ID
+приймається лише зі structured `thread.started` і перевіряється при resume.
+Storage підключено в composition root, а restart integration test підтверджує
+new manager → той самий project/thread. Live SDK smoke у temporary Git repository
+підтвердив збереження контексту між `startThread` і `resumeThread`.
 
 ### [ ] DEV-021 — Persist active project selection
 
@@ -377,7 +416,14 @@ question, completion і failure.
 **Готово, коли:** fake-clock tests перевіряють batching/rate limit і terminal
 events; Telegram flood не створюється.
 
-### [ ] DEV-025 — Завершити Phase 2 наскрізним тестом
+### [ ] DEV-025 — видалити deprecated punycode модуль.
+
+Знайти залежні від модуля puny модулі. Замінити версії модулів на ті, що не використовують punycode.
+
+**Готово коли:** в проекті не використовується punycode. Тести проходять, проект стартує 
+без повідомлень про deprecated модулі.
+
+### [ ] DEV-026 — Завершити Phase 2 наскрізним тестом
 
 Перевірити два projects, окремі sessions, перемикання, питання/відповідь і
 restart gateway. Оновити `docs/architecture.md`, якщо реальна поведінка Codex
@@ -604,7 +650,7 @@ repository sandbox. Зафіксувати threat model у `docs/security.md`.
 **Готово, коли:** немає shell interpolation із user input, paths не виходять за
 configured repository без explicit policy, security test suite зелений.
 
-### [ ] DEV-046 — Підготувати README
+### [x] DEV-046 — Підготувати README
 
 Описати prerequisites, BotFather setup, installation, `.env`, project config,
 scripts, usage/commands, IntelliJ coexistence, security, data/log locations,
@@ -613,7 +659,11 @@ update procedure і troubleshooting. Не вставляти реальні toke
 **Готово, коли:** новий користувач може встановити й запустити gateway лише за
 README та example files.
 
-### [ ] DEV-047 — Додати systemd unit example
+**Виконано 2026-09-15:** додано README з prerequisites, BotFather/config setup,
+Codex login, project schema, dev/production запуском, deployment/update flow,
+актуальними командами, security/data notes і troubleshooting.
+
+### [x] DEV-047 — Додати systemd unit example
 
 **Файли:** `deploy/codex-remote.service`, розділ README.
 
@@ -623,6 +673,10 @@ username/path; пояснити підстановку та доступ до Co
 
 **Готово, коли:** `systemd-analyze verify` проходить для підставленого локального
 example, start/stop/restart не залишає процесів.
+
+**Виконано 2026-09-15:** додано portable unit template і керуючий shell script
+для render/install/start/stop/restart/status/logs/uninstall; rendered local unit
+проходить `systemd-analyze verify`. Live install навмисно лишається operator action.
 
 ### [ ] DEV-048 — Фінальна перевірка Definition of Done
 

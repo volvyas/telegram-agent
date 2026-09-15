@@ -105,23 +105,21 @@ export class CodexAdapter implements CodingAgent {
   public resume(options: AgentResumeOptions): Promise<AgentRun> {
     validateThreadId(options.threadId);
     validateTurnInput(options.projectId, options.workingDirectory, options.prompt);
-    this.#threadIds.set(options.projectId, options.threadId);
     const thread = this.#resumeThread(
       options.threadId,
       options.workingDirectory,
     );
-    return this.#startRun(options.projectId, options.prompt, thread);
+    return this.#startRun(options.projectId, options.prompt, thread, options.threadId);
   }
 
   public send(options: AgentMessageOptions): Promise<AgentRun> {
     validateThreadId(options.threadId);
     validateTurnInput(options.projectId, options.workingDirectory, options.message);
-    this.#threadIds.set(options.projectId, options.threadId);
     const thread = this.#resumeThread(
       options.threadId,
       options.workingDirectory,
     );
-    return this.#startRun(options.projectId, options.message, thread);
+    return this.#startRun(options.projectId, options.message, thread, options.threadId);
   }
 
   public stop(runId: string): Promise<boolean> {
@@ -167,6 +165,7 @@ export class CodexAdapter implements CodingAgent {
     projectId: string,
     input: string,
     thread: CodexThreadPort,
+    expectedThreadId?: string,
   ): Promise<AgentRun> {
     const runId = this.#idFactory();
     if (runId.length === 0 || this.#activeRuns.has(runId)) {
@@ -198,7 +197,13 @@ export class CodexAdapter implements CodingAgent {
     return Object.freeze({
       runId,
       projectId,
-      events: this.#mapEvents(streamedTurn.events, mapper, activeRun, runId),
+      events: this.#mapEvents(
+        streamedTurn.events,
+        mapper,
+        activeRun,
+        runId,
+        expectedThreadId,
+      ),
     });
   }
 
@@ -207,6 +212,7 @@ export class CodexAdapter implements CodingAgent {
     mapper: CodexEventMapper,
     activeRun: ActiveRun,
     runId: string,
+    expectedThreadId?: string,
   ): AsyncIterable<AgentEvent> {
     let terminalEventSeen = false;
     let reportedDiagnostics = 0;
@@ -215,6 +221,12 @@ export class CodexAdapter implements CodingAgent {
       for await (const sdkEvent of events) {
         for (const event of mapper.map(sdkEvent)) {
           if (event.type === "thread_started") {
+            if (expectedThreadId !== undefined && event.threadId !== expectedThreadId) {
+              throw new CodexAdapterError(
+                "THREAD_ID_MISMATCH",
+                "Codex resumed a different thread than requested",
+              );
+            }
             this.#threadIds.set(event.projectId, event.threadId);
           }
           terminalEventSeen ||= isTerminalEvent(event);

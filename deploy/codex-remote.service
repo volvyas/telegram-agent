@@ -1,0 +1,28 @@
+[Unit]
+Description=Remote Codex Agent Telegram Gateway
+Documentation=file://@@PROJECT_ROOT@@/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@@SERVICE_USER@@
+WorkingDirectory=@@PROJECT_ROOT@@
+EnvironmentFile=@@PROJECT_ROOT@@/.env
+Environment="NODE_ENV=production"
+Environment="PATH=@@NODE_DIRECTORY@@:/usr/local/bin:/usr/bin:/bin"
+ExecStart="@@NODE_BINARY@@" "@@PROJECT_ROOT@@/dist/index.js"
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=45s
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+SyslogIdentifier=codex-remote
+
+[Install]
+WantedBy=multi-user.target
