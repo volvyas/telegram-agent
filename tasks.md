@@ -416,7 +416,14 @@ question, completion і failure.
 **Готово, коли:** fake-clock tests перевіряють batching/rate limit і terminal
 events; Telegram flood не створюється.
 
-### [ ] DEV-025 — Завершити Phase 2 наскрізним тестом
+### [ ] DEV-025 — видалити deprecated punycode модуль.
+
+Знайти залежні від модуля puny модулі. Замінити версії модулів на ті, що не використовують punycode.
+
+**Готово коли:** в проекті не використовується punycode. Тести проходять, проект стартує 
+без повідомлень про deprecated модулі.
+
+### [ ] DEV-026 — Завершити Phase 2 наскрізним тестом
 
 Перевірити два projects, окремі sessions, перемикання, питання/відповідь і
 restart gateway. Оновити `docs/architecture.md`, якщо реальна поведінка Codex
