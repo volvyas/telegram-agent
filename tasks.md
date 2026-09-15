@@ -636,7 +636,7 @@ repository sandbox. Зафіксувати threat model у `docs/security.md`.
 **Готово, коли:** немає shell interpolation із user input, paths не виходять за
 configured repository без explicit policy, security test suite зелений.
 
-### [ ] DEV-046 — Підготувати README
+### [x] DEV-046 — Підготувати README
 
 Описати prerequisites, BotFather setup, installation, `.env`, project config,
 scripts, usage/commands, IntelliJ coexistence, security, data/log locations,
@@ -645,7 +645,11 @@ update procedure і troubleshooting. Не вставляти реальні toke
 **Готово, коли:** новий користувач може встановити й запустити gateway лише за
 README та example files.
 
-### [ ] DEV-047 — Додати systemd unit example
+**Виконано 2026-09-15:** додано README з prerequisites, BotFather/config setup,
+Codex login, project schema, dev/production запуском, deployment/update flow,
+актуальними командами, security/data notes і troubleshooting.
+
+### [x] DEV-047 — Додати systemd unit example
 
 **Файли:** `deploy/codex-remote.service`, розділ README.
 
@@ -655,6 +659,10 @@ username/path; пояснити підстановку та доступ до Co
 
 **Готово, коли:** `systemd-analyze verify` проходить для підставленого локального
 example, start/stop/restart не залишає процесів.
+
+**Виконано 2026-09-15:** додано portable unit template і керуючий shell script
+для render/install/start/stop/restart/status/logs/uninstall; rendered local unit
+проходить `systemd-analyze verify`. Live install навмисно лишається operator action.
 
 ### [ ] DEV-048 — Фінальна перевірка Definition of Done
 
