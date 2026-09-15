@@ -219,10 +219,10 @@ Gateway і IntelliJ працюють із тими самими файлами. 
 - systemd unit працює від explicit non-root user, з `UMask=0077` і
   `NoNewPrivileges=true`.
 
-Storage schema передбачає `data/state.json`. У поточній проміжній Phase 2
-реалізації storage/session компоненти вже існують, але ще не підключені до
-application composition root; active project і agent session runtime поки
-втрачаються після restart. Це буде завершено наступними Phase 2 tasks.
+Agent sessions і Codex thread IDs зберігаються у `data/state.json`; після
+restart наступна task для project resume-ить його попередній thread. Active
+Telegram project selection поки лишається in-memory і буде persist-итися в
+наступній Phase 2 task.
 
 ## Troubleshooting
 

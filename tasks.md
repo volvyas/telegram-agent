@@ -356,7 +356,7 @@ session відновлюється лише в тому самому canonical r
 ID/state per project, захист від restore у repository з іншим canonical path і
 reconciliation orphaned `RUNNING` → `FAILED`; tests покривають ізоляцію та restart.
 
-### [ ] DEV-020 — Додати resume до `CodexAdapter`
+### [x] DEV-020 — Додати resume до `CodexAdapter`
 
 **Залежить від:** DEV-002, DEV-019. **Клас:** доповнення `CodexAdapter`.
 
@@ -366,6 +366,13 @@ reconciliation orphaned `RUNNING` → `FAILED`; tests покривають із�
 
 **Готово, коли:** tests перевіряють точні args/protocol для new і resumed run,
 а ручний smoke test підтверджує продовження контексту.
+
+**Виконано 2026-09-15:** persisted project thread автоматично обирає SDK
+`resumeThread(threadId, lockedDownOptions)` замість `startThread`; thread ID
+приймається лише зі structured `thread.started` і перевіряється при resume.
+Storage підключено в composition root, а restart integration test підтверджує
+new manager → той самий project/thread. Live SDK smoke у temporary Git repository
+підтвердив збереження контексту між `startThread` і `resumeThread`.
 
 ### [ ] DEV-021 — Persist active project selection
 

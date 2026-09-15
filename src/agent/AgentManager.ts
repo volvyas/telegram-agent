@@ -12,9 +12,15 @@ export interface AgentProjectRegistry {
 
 export type AgentEventListener = (event: AgentEvent) => void | Promise<void>;
 
+export interface AgentSessionStore {
+  getSession(projectId: string): Promise<AgentSession | undefined>;
+  saveSession(session: AgentSession): Promise<void>;
+}
+
 export interface AgentManagerOptions {
   readonly onEvent?: AgentEventListener;
   readonly clock?: () => Date;
+  readonly sessionStore?: AgentSessionStore;
 }
 
 export interface AgentStatus {
@@ -65,6 +71,7 @@ export class AgentManager {
   readonly #projects: AgentProjectRegistry;
   readonly #clock: () => Date;
   readonly #onEvent: AgentEventListener | undefined;
+  readonly #sessionStore: AgentSessionStore | undefined;
   readonly #sessions = new Map<string, ManagedSession>();
   readonly #activeOperations = new Map<string, ActiveOperation>();
 
@@ -77,6 +84,7 @@ export class AgentManager {
     this.#projects = projects;
     this.#clock = options.clock ?? (() => new Date());
     this.#onEvent = options.onEvent;
+    this.#sessionStore = options.sessionStore;
   }
 
   /** Starts and consumes one complete agent turn. */
@@ -96,24 +104,26 @@ export class AgentManager {
         projectId,
       );
     }
-    if (this.#sessions.get(projectId)?.machine.state === "WAITING_FOR_USER") {
-      throw new AgentManagerError(
-        "SESSION_WAITING_FOR_USER",
-        "The project session is waiting for a user response",
-        projectId,
-      );
-    }
-
     const operation = createActiveOperation(projectId);
     this.#activeOperations.set(projectId, operation);
-    const session = this.#beginSession(project);
+    let session: ManagedSession | undefined;
 
     try {
-      const run = await this.#agent.start({
-        projectId,
-        workingDirectory: project.path,
-        prompt,
-      });
+      const prepared = await this.#beginSession(project);
+      session = prepared.session;
+      await this.#persistSession(session);
+      const run = prepared.threadId === undefined
+        ? await this.#agent.start({
+            projectId,
+            workingDirectory: project.path,
+            prompt,
+          })
+        : await this.#agent.resume({
+            projectId,
+            workingDirectory: project.path,
+            threadId: prepared.threadId,
+            prompt,
+          });
       if (run.projectId !== projectId) {
         throw new AgentManagerError(
           "RUN_PROJECT_MISMATCH",
@@ -126,25 +136,33 @@ export class AgentManager {
       this.#updateSnapshot(session, { activeRunId: run.runId });
       await this.#consumeEvents(session, run.runId, run.events);
     } catch (error) {
-      if (session.machine.state === "RUNNING") {
+      let operationError = error;
+      if (session?.machine.state === "RUNNING") {
         session.machine.transition("turn_failed");
         this.#updateSnapshot(session, { state: session.machine.state });
+        try {
+          await this.#persistSession(session);
+        } catch (persistenceError) {
+          operationError = persistenceError;
+        }
       }
-      if (error instanceof AgentManagerError) {
-        throw error;
+      if (operationError instanceof AgentManagerError) {
+        throw operationError;
       }
       throw new AgentManagerError(
         "OPERATION_FAILED",
         "Unable to run the coding agent operation",
         projectId,
-        { cause: error },
+        { cause: operationError },
       );
     } finally {
       const active = this.#activeOperations.get(projectId);
       if (active?.token === operation.token) {
         this.#activeOperations.delete(projectId);
       }
-      this.#updateSnapshot(session, { activeRunId: undefined });
+      if (session !== undefined) {
+        this.#updateSnapshot(session, { activeRunId: undefined });
+      }
       operation.finish();
     }
   }
@@ -176,8 +194,28 @@ export class AgentManager {
     await Promise.all(operations.map((operation) => operation.finished));
   }
 
-  #beginSession(project: ProjectConfig): ManagedSession {
-    const existing = this.#sessions.get(project.id);
+  async #beginSession(
+    project: ProjectConfig,
+  ): Promise<{ readonly session: ManagedSession; readonly threadId?: string }> {
+    let existing = this.#sessions.get(project.id);
+    if (existing === undefined) {
+      const restored = await this.#sessionStore?.getSession(project.id);
+      if (restored !== undefined) {
+        existing = {
+          machine: new AgentStateMachine(restored.state, this.#clock),
+          snapshot: restored,
+        };
+        this.#sessions.set(project.id, existing);
+      }
+    }
+    if (existing?.machine.state === "WAITING_FOR_USER") {
+      throw new AgentManagerError(
+        "SESSION_WAITING_FOR_USER",
+        "The project session is waiting for a user response",
+        project.id,
+      );
+    }
+
     const now = this.#clock().toISOString();
     if (existing === undefined) {
       const machine = new AgentStateMachine("IDLE", this.#clock);
@@ -193,9 +231,10 @@ export class AgentManager {
         }),
       };
       this.#sessions.set(project.id, session);
-      return session;
+      return { session };
     }
 
+    const threadId = existing.snapshot.threadId;
     const reason = existing.machine.state === "IDLE" ? "task_started" : "continued";
     existing.machine.transition(reason);
     this.#updateSnapshot(existing, {
@@ -203,7 +242,10 @@ export class AgentManager {
       startedAt: now,
       lastEvent: undefined,
     });
-    return existing;
+    return {
+      session: existing,
+      ...(threadId === undefined ? {} : { threadId }),
+    };
   }
 
   async #consumeEvents(
@@ -234,6 +276,7 @@ export class AgentManager {
         lastEvent: event,
         ...(event.type === "thread_started" ? { threadId: event.threadId } : {}),
       });
+      await this.#persistSession(session);
       await this.#onEvent?.(event);
     }
 
@@ -293,6 +336,10 @@ export class AgentManager {
       next.lastEvent = lastEvent;
     }
     session.snapshot = Object.freeze(next);
+  }
+
+  async #persistSession(session: ManagedSession): Promise<void> {
+    await this.#sessionStore?.saveSession(session.snapshot);
   }
 }
 

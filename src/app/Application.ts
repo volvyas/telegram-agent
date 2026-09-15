@@ -1,7 +1,11 @@
+import { resolve } from "node:path";
+
 import { AgentManager } from "../agent/AgentManager.js";
 import { CodexAdapter } from "../agent/codex/CodexAdapter.js";
 import { ConfigLoader } from "../config/ConfigLoader.js";
 import { ProjectManager } from "../projects/ProjectManager.js";
+import { SessionManager } from "../sessions/SessionManager.js";
+import { JsonStorage } from "../storage/JsonStorage.js";
 import { AuthGuard } from "../telegram/AuthGuard.js";
 import { CommandRouter } from "../telegram/CommandRouter.js";
 import { TelegramBot } from "../telegram/TelegramBot.js";
@@ -24,9 +28,14 @@ export interface ApplicationBot {
   stop(): Promise<void>;
 }
 
+export interface ApplicationStorage {
+  close(): Promise<void>;
+}
+
 export interface ApplicationDependencies {
   readonly agentManager: ApplicationAgentManager;
   readonly bot: ApplicationBot;
+  readonly storage?: ApplicationStorage;
   readonly signals?: SignalSource;
 }
 
@@ -40,6 +49,7 @@ export interface ApplicationCreateOptions {
 export class Application {
   readonly #agentManager: ApplicationAgentManager;
   readonly #bot: ApplicationBot;
+  readonly #storage: ApplicationStorage | undefined;
   readonly #signals: SignalSource;
   readonly #signalHandlers = new Map<ShutdownSignal, () => void>();
   #started = false;
@@ -48,6 +58,7 @@ export class Application {
   public constructor(dependencies: ApplicationDependencies) {
     this.#agentManager = dependencies.agentManager;
     this.#bot = dependencies.bot;
+    this.#storage = dependencies.storage;
     this.#signals = dependencies.signals ?? process;
   }
 
@@ -62,12 +73,17 @@ export class Application {
     const config = configLoader.loadAppConfig();
     const projectsDocument = await configLoader.loadProjectsDocument(config);
     const projectManager = await ProjectManager.fromDocument(projectsDocument);
+    const dataDirectory = resolve(options.cwd ?? process.cwd(), "data");
+    const storage = new JsonStorage(dataDirectory);
+    const sessionManager = new SessionManager(storage, projectManager);
     const environment = { ...(options.environment ?? process.env) };
     const adapter = new CodexAdapter({
       environment,
       ...(config.codexHome === undefined ? {} : { codexHome: config.codexHome }),
     });
-    const agentManager = new AgentManager(adapter, projectManager);
+    const agentManager = new AgentManager(adapter, projectManager, {
+      sessionStore: sessionManager,
+    });
     const projectHandler = new ProjectHandler(projectManager);
     const taskHandler = new TaskHandler(agentManager, projectHandler);
     const commandRouter = new CommandRouter(projectHandler, taskHandler);
@@ -81,6 +97,7 @@ export class Application {
     return new Application({
       agentManager,
       bot,
+      storage,
       ...(options.signals === undefined ? {} : { signals: options.signals }),
     });
   }
@@ -109,8 +126,12 @@ export class Application {
     try {
       await this.#agentManager.stopAll();
     } finally {
-      if (this.#started) {
-        await this.#bot.stop();
+      try {
+        if (this.#started) {
+          await this.#bot.stop();
+        }
+      } finally {
+        await this.#storage?.close();
       }
     }
   }

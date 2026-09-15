@@ -41,13 +41,19 @@ describe("Application", () => {
         return Promise.resolve();
       }),
     };
-    const application = new Application({ agentManager, bot, signals });
+    const storage = {
+      close: vi.fn(() => {
+        callOrder.push("storage");
+        return Promise.resolve();
+      }),
+    };
+    const application = new Application({ agentManager, bot, storage, signals });
 
     const running = application.start();
     signals.emit("SIGTERM");
     await running;
 
-    expect(callOrder).toEqual(["agents", "bot"]);
+    expect(callOrder).toEqual(["agents", "bot", "storage"]);
     expect(signals.listenerCount()).toBe(0);
   });
 

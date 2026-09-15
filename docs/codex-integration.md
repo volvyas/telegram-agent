@@ -48,6 +48,11 @@ application typed API. Це стабільніше для нашого TypeScrip
 Локальний smoke test додатково підтвердив JSONL streaming, thread ID, exit code
 `0` і resume конкретного session ID.
 
+Повторний SDK smoke test **2026-09-15** перевірив production adapter flow у
+тимчасовому Git repository: `startThread` повернув ID тільки через structured
+`thread.started`, після чого новий `resumeThread` із цим ID зберіг контекст між
+turns (`KYIV-2048`). Обидва turns завершилися успішно, repository очищено.
+
 ## Adapter contract
 
 `CodexAdapter` є єдиним application class, який імпортує Codex SDK types.
