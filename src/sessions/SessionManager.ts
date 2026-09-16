@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "../config/ProjectConfig.js";
-import type { AgentSession } from "../domain/AgentSession.js";
-import type { PersistedSessionRecord, Storage } from "../storage/Storage.js";
+import type { AgentSession, PendingAgentQuestion } from "../domain/AgentSession.js";
+import type { PersistedPendingQuestion, PersistedSessionRecord, Storage } from "../storage/Storage.js";
 
 export interface SessionProjectRegistry {
   require(projectId: string): ProjectConfig;
@@ -133,6 +133,9 @@ function toPersistedSession(session: AgentSession): PersistedSessionRecord {
     state: session.state,
     ...(session.threadId === undefined ? {} : { threadId: session.threadId }),
     ...(session.startedAt === undefined ? {} : { startedAt: session.startedAt }),
+    ...(session.pendingQuestion === undefined
+      ? {}
+      : { pendingQuestion: toPersistedQuestion(session.pendingQuestion) }),
     updatedAt: session.updatedAt,
   };
 }
@@ -144,6 +147,29 @@ function toAgentSession(record: PersistedSessionRecord): AgentSession {
     state: record.state,
     ...(record.threadId === undefined ? {} : { threadId: record.threadId }),
     ...(record.startedAt === undefined ? {} : { startedAt: record.startedAt }),
+    ...(record.pendingQuestion === undefined
+      ? {}
+      : { pendingQuestion: toAgentQuestion(record.pendingQuestion) }),
     updatedAt: record.updatedAt,
+  });
+}
+
+function toPersistedQuestion(question: PendingAgentQuestion): PersistedPendingQuestion {
+  return {
+    questionId: question.questionId,
+    question: question.question,
+    choices: [...question.choices],
+    ...(question.userId === undefined ? {} : { userId: question.userId }),
+    createdAt: question.createdAt,
+  };
+}
+
+function toAgentQuestion(question: PersistedPendingQuestion): PendingAgentQuestion {
+  return Object.freeze({
+    questionId: question.questionId,
+    question: question.question,
+    choices: Object.freeze([...question.choices]),
+    ...(question.userId === undefined ? {} : { userId: question.userId }),
+    createdAt: question.createdAt,
   });
 }

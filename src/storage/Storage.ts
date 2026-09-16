@@ -17,6 +17,15 @@ export interface PersistedSessionRecord {
   readonly threadId?: string;
   readonly startedAt?: PersistedTimestamp;
   readonly updatedAt: PersistedTimestamp;
+  readonly pendingQuestion?: PersistedPendingQuestion;
+}
+
+export interface PersistedPendingQuestion {
+  readonly questionId: string;
+  readonly question: string;
+  readonly choices: readonly string[];
+  readonly userId?: number;
+  readonly createdAt: PersistedTimestamp;
 }
 
 export type PersistedTaskStatus =

@@ -11,6 +11,8 @@ import { CommandRouter } from "../telegram/CommandRouter.js";
 import { TelegramBot } from "../telegram/TelegramBot.js";
 import { ProjectHandler } from "../telegram/handlers/ProjectHandler.js";
 import { TaskHandler } from "../telegram/handlers/TaskHandler.js";
+import { AnswerHandler } from "../telegram/handlers/AnswerHandler.js";
+import { ProgressReporter } from "../telegram/ProgressReporter.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -81,12 +83,15 @@ export class Application {
       environment,
       ...(config.codexHome === undefined ? {} : { codexHome: config.codexHome }),
     });
+    const progressReporter = new ProgressReporter();
     const agentManager = new AgentManager(adapter, projectManager, {
       sessionStore: sessionManager,
+      onEvent: (event) => progressReporter.onEvent(event),
     });
-    const projectHandler = new ProjectHandler(projectManager);
-    const taskHandler = new TaskHandler(agentManager, projectHandler);
-    const commandRouter = new CommandRouter(projectHandler, taskHandler);
+    const projectHandler = new ProjectHandler(projectManager, undefined, storage);
+    const answerHandler = new AnswerHandler(agentManager, projectHandler, progressReporter);
+    const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter);
+    const commandRouter = new CommandRouter(projectHandler, taskHandler, answerHandler);
     const bot = new TelegramBot({
       token: config.telegramBotToken,
       authGuard: new AuthGuard(config.telegramAllowedUserIds),

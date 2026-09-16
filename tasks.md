@@ -374,7 +374,7 @@ Storage підключено в composition root, а restart integration test п
 new manager → той самий project/thread. Live SDK smoke у temporary Git repository
 підтвердив збереження контексту між `startThread` і `resumeThread`.
 
-### [ ] DEV-021 — Persist active project selection
+### [x] DEV-021 — Persist active project selection
 
 **Класи:** доповнення `ProjectManager`/`ProjectHandler` через `Storage`.
 
@@ -383,7 +383,10 @@ new manager → той самий project/thread. Live SDK smoke у temporary Gi
 
 **Готово, коли:** test перезапуску повертає dashboard попереднього project.
 
-### [ ] DEV-022 — Підтримати agent questions і `WAITING_FOR_USER`
+**Виконано 2026-09-15:** active project зберігається per user у `Storage`, відновлюється
+для dashboard/task flow, а project, видалений з config, ігнорується.
+
+### [x] DEV-022 — Підтримати agent questions і `WAITING_FOR_USER`
 
 **Класи:** decoder structured turn outcome, доповнення `CodexEventMapper`,
 `AgentManager`, `AgentStateMachine`.
@@ -394,7 +397,11 @@ new manager → той самий project/thread. Live SDK smoke у temporary Gi
 **Готово, коли:** tests покривають RUNNING → WAITING → RUNNING, stale question
 та питання одночасно у двох різних projects.
 
-### [ ] DEV-023 — Реалізувати відповіді користувача агенту
+**Виконано 2026-09-15:** structured final outcome `{ kind: "question" }` map-иться
+у domain question; pending question з owner/context зберігається в session і
+відновлюється після restart.
+
+### [x] DEV-023 — Реалізувати відповіді користувача агенту
 
 **Класи:** `AnswerHandler`, доповнення `AgentManager`/`CodexAdapter`.
 
@@ -405,7 +412,11 @@ pending question. Callback user ID перевіряється guard.
 **Готово, коли:** integration test проходить question → Telegram answer → та сама
 agent session → continued result; повторна/stale відповідь відхиляється.
 
-### [ ] DEV-024 — Реалізувати розумний `ProgressReporter`
+**Виконано 2026-09-15:** додано `AnswerHandler`: `/answer`, text у waiting state
+та opaque inline choices продовжують той самий thread через `CodingAgent.send`;
+stale question і user/project mismatch відхиляються.
+
+### [x] DEV-024 — Реалізувати розумний `ProgressReporter`
 
 **Клас:** `ProgressReporter`.
 
@@ -416,12 +427,19 @@ question, completion і failure.
 **Готово, коли:** fake-clock tests перевіряють batching/rate limit і terminal
 events; Telegram flood не створюється.
 
-### [ ] DEV-025 — видалити deprecated punycode модуль.
+**Виконано 2026-09-15:** `ProgressReporter` агрегує transient agent events у
+одне rate-limited Telegram edit; questions і terminal results надсилаються
+окремо. Додано fake-clock tests batching, rate limit та terminal isolation.
+
+### [x] DEV-025 — видалити deprecated punycode модуль.
 
 Знайти залежні від модуля puny модулі. Замінити версії модулів на ті, що не використовують punycode.
 
 **Готово коли:** в проекті не використовується punycode. Тести проходять, проект стартує 
 без повідомлень про deprecated модулі.
+
+**Виконано 2026-09-16:** ESLint замінено на Biome, бо актуальний ESLint усе ще
+тягне `ajv 6 → uri-js → punycode`; `npm ls punycode puny --all` тепер порожній.
 
 ### [ ] DEV-026 — Завершити Phase 2 наскрізним тестом
 
@@ -431,6 +449,12 @@ restart gateway. Оновити `docs/architecture.md`, якщо реальна 
 
 **Готово, коли:** automated scenario з mock agent зелений, а manual smoke test з
 реальним Codex підтверджено чеклістом у документі.
+
+**Автоматизовано 2026-09-16:** додано scenario з двома isolated projects,
+switching, progress edits, persisted question/answer і restart через реальні
+`TelegramBot`/`CommandRouter` boundaries. Виправлено routing text/callback updates.
+Реальний Codex/Telegram smoke залишено в `docs/architecture.md` як operator
+checklist і ще потребує виконання.
 
 ---
 

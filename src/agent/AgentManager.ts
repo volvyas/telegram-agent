@@ -1,4 +1,4 @@
-import type { AgentSession } from "../domain/AgentSession.js";
+import type { AgentSession, PendingAgentQuestion } from "../domain/AgentSession.js";
 import type { ProjectConfig } from "../config/ProjectConfig.js";
 import type { ProjectManager } from "../projects/ProjectManager.js";
 import type { AgentEvent } from "./AgentEvent.js";
@@ -60,10 +60,11 @@ interface ActiveOperation {
 }
 
 type AgentSessionPatch = Partial<
-  Omit<AgentSession, "activeRunId" | "lastEvent">
+  Omit<AgentSession, "activeRunId" | "lastEvent" | "pendingQuestion">
 > & {
   readonly activeRunId?: string | undefined;
   readonly lastEvent?: AgentEvent | undefined;
+  readonly pendingQuestion?: PendingAgentQuestion | undefined;
 };
 
 export class AgentManager {
@@ -88,7 +89,7 @@ export class AgentManager {
   }
 
   /** Starts and consumes one complete agent turn. */
-  public async startTask(projectId: string, prompt: string): Promise<void> {
+  public async startTask(projectId: string, prompt: string, userId?: number): Promise<void> {
     const project = this.#projects.require(projectId);
     if (!project.allowedOperations.has("task")) {
       throw new AgentManagerError(
@@ -134,7 +135,7 @@ export class AgentManager {
 
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
-      await this.#consumeEvents(session, run.runId, run.events);
+      await this.#consumeEvents(session, run.runId, run.events, userId);
     } catch (error) {
       let operationError = error;
       if (session?.machine.state === "RUNNING") {
@@ -179,9 +180,67 @@ export class AgentManager {
     });
   }
 
+  /** Sends an answer only to the pending question in the same project thread. */
+  public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number): Promise<void> {
+    const project = this.#projects.require(projectId);
+    if (this.#activeOperations.has(projectId)) {
+      throw new AgentManagerError("OPERATION_ACTIVE", "An operation is already active for this project", projectId);
+    }
+    const operation = createActiveOperation(projectId);
+    this.#activeOperations.set(projectId, operation);
+    let session: ManagedSession | undefined;
+    try {
+      session = await this.#getWaitingSession(project);
+      const pending = session.snapshot.pendingQuestion;
+      if (pending?.questionId !== questionId) {
+        throw new AgentManagerError("QUESTION_STALE", "The question is no longer pending", projectId);
+      }
+      if (pending.userId !== undefined && pending.userId !== userId) {
+        throw new AgentManagerError("QUESTION_USER_MISMATCH", "The question belongs to another user", projectId);
+      }
+      const threadId = session.snapshot.threadId;
+      if (threadId === undefined) throw new AgentManagerError("QUESTION_THREAD_MISSING", "The question has no resumable thread", projectId);
+      session.machine.transition("user_answered");
+      this.#updateSnapshot(session, { state: session.machine.state, activeRunId: undefined, lastEvent: undefined, pendingQuestion: undefined });
+      await this.#persistSession(session);
+      const run = await this.#agent.send({ projectId, workingDirectory: project.path, threadId, message: answer });
+      if (run.projectId !== projectId) throw new AgentManagerError("RUN_PROJECT_MISMATCH", "Coding agent returned a run for another project", projectId);
+      operation.runId = run.runId;
+      this.#updateSnapshot(session, { activeRunId: run.runId });
+      await this.#consumeEvents(session, run.runId, run.events, userId);
+    } catch (error) {
+      let operationError = error;
+      if (session?.machine.state === "RUNNING") {
+        session.machine.transition("turn_failed");
+        this.#updateSnapshot(session, { state: session.machine.state });
+        try { await this.#persistSession(session); } catch (persistenceError) { operationError = persistenceError; }
+      }
+      if (operationError instanceof AgentManagerError) throw operationError;
+      throw new AgentManagerError("OPERATION_FAILED", "Unable to send the user answer", projectId, { cause: operationError });
+    } finally {
+      if (this.#activeOperations.get(projectId)?.token === operation.token) this.#activeOperations.delete(projectId);
+      if (session !== undefined) this.#updateSnapshot(session, { activeRunId: undefined });
+      operation.finish();
+    }
+  }
+
   public getSession(projectId: string): AgentSession | undefined {
     this.#projects.require(projectId);
     return this.#sessions.get(projectId)?.snapshot;
+  }
+
+  /** Restores a persisted pending question when this manager was recreated. */
+  public async getPendingQuestion(projectId: string): Promise<PendingAgentQuestion | undefined> {
+    const project = this.#projects.require(projectId);
+    let session = this.#sessions.get(project.id);
+    if (session === undefined) {
+      const restored = await this.#sessionStore?.getSession(project.id);
+      if (restored !== undefined) {
+        session = { machine: new AgentStateMachine(restored.state, this.#clock), snapshot: restored };
+        this.#sessions.set(project.id, session);
+      }
+    }
+    return session?.snapshot.pendingQuestion;
   }
 
   /** Requests cancellation for every run currently owned by this manager. */
@@ -248,10 +307,26 @@ export class AgentManager {
     };
   }
 
+  async #getWaitingSession(project: ProjectConfig): Promise<ManagedSession> {
+    let session = this.#sessions.get(project.id);
+    if (session === undefined) {
+      const restored = await this.#sessionStore?.getSession(project.id);
+      if (restored !== undefined) {
+        session = { machine: new AgentStateMachine(restored.state, this.#clock), snapshot: restored };
+        this.#sessions.set(project.id, session);
+      }
+    }
+    if (session?.machine.state !== "WAITING_FOR_USER") {
+      throw new AgentManagerError("QUESTION_NOT_PENDING", "The project is not waiting for an answer", project.id);
+    }
+    return session;
+  }
+
   async #consumeEvents(
     session: ManagedSession,
     runId: string,
     events: AsyncIterable<AgentEvent>,
+    userId?: number,
   ): Promise<void> {
     let terminal = false;
     for await (const event of events) {
@@ -275,6 +350,7 @@ export class AgentManager {
         state: session.machine.state,
         lastEvent: event,
         ...(event.type === "thread_started" ? { threadId: event.threadId } : {}),
+        ...(event.type === "question" ? { pendingQuestion: toPendingQuestion(event, userId) } : {}),
       });
       await this.#persistSession(session);
       await this.#onEvent?.(event);
@@ -318,7 +394,7 @@ export class AgentManager {
     const next = { ...session.snapshot } as {
       -readonly [Key in keyof AgentSession]: AgentSession[Key];
     };
-    const { activeRunId, lastEvent, ...values } = patch;
+    const { activeRunId, lastEvent, pendingQuestion, ...values } = patch;
     Object.assign(next, values, { updatedAt: this.#clock().toISOString() });
 
     if (activeRunId === undefined) {
@@ -335,6 +411,11 @@ export class AgentManager {
     } else {
       next.lastEvent = lastEvent;
     }
+    if (pendingQuestion === undefined) {
+      if ("pendingQuestion" in patch) delete next.pendingQuestion;
+    } else {
+      next.pendingQuestion = pendingQuestion;
+    }
     session.snapshot = Object.freeze(next);
   }
 
@@ -349,4 +430,14 @@ function createActiveOperation(projectId: string): ActiveOperation {
     finish = resolve;
   });
   return { token: Symbol(projectId), finished, finish };
+}
+
+function toPendingQuestion(event: Extract<AgentEvent, { readonly type: "question" }>, userId?: number): PendingAgentQuestion {
+  return Object.freeze({
+    questionId: event.questionId,
+    question: event.question,
+    choices: Object.freeze([...event.choices]),
+    ...(userId === undefined ? {} : { userId }),
+    createdAt: event.occurredAt,
+  });
 }

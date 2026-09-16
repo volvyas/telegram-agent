@@ -2,6 +2,7 @@ import type { Context } from "grammy";
 
 import type { ProjectConfig } from "../../config/ProjectConfig.js";
 import type { ProjectManager } from "../../projects/ProjectManager.js";
+import type { Storage } from "../../storage/Storage.js";
 import { ProjectKeyboard } from "../keyboards/ProjectKeyboard.js";
 
 const UNKNOWN_PROJECT_MESSAGE = "Unknown project.";
@@ -10,17 +11,20 @@ export class ProjectHandler {
   readonly #projectManager: ProjectManager;
   readonly #keyboard: ProjectKeyboard;
   readonly #activeProjects = new Map<number, string>();
+  readonly #storage: Storage | undefined;
 
   public constructor(
     projectManager: ProjectManager,
     keyboard = new ProjectKeyboard(),
+    storage?: Storage,
   ) {
     this.#projectManager = projectManager;
     this.#keyboard = keyboard;
+    this.#storage = storage;
   }
 
   public async handleStart(context: Context): Promise<void> {
-    const activeProject = this.activeProjectFor(context);
+    const activeProject = await this.activeProjectFor(context);
     if (activeProject === undefined) {
       await context.reply(
         "Welcome. Select a project to continue.",
@@ -65,6 +69,15 @@ export class ProjectHandler {
     return projectId === undefined ? undefined : this.#projectManager.get(projectId);
   }
 
+  public async restoreActiveProject(userId: number): Promise<ProjectConfig | undefined> {
+    const active = this.getActiveProject(userId);
+    if (active !== undefined || this.#storage === undefined) return active;
+    const record = (await this.#storage.load()).activeProjects[String(userId)];
+    const project = record === undefined ? undefined : this.#projectManager.get(record.projectId);
+    if (project !== undefined) this.#activeProjects.set(userId, project.id);
+    return project;
+  }
+
   private async selectProject(context: Context, projectId: string): Promise<void> {
     const userId = context.from?.id;
     const project = this.#projectManager.get(projectId);
@@ -74,12 +87,22 @@ export class ProjectHandler {
     }
 
     this.#activeProjects.set(userId, project.id);
+    if (this.#storage !== undefined) {
+      const updatedAt = new Date().toISOString();
+      await this.#storage.update((state) => ({
+        ...state,
+        activeProjects: {
+          ...state.activeProjects,
+          [String(userId)]: { projectId: project.id, updatedAt },
+        },
+      }));
+    }
     await context.reply(formatDashboard(project));
   }
 
-  private activeProjectFor(context: Context): ProjectConfig | undefined {
+  private async activeProjectFor(context: Context): Promise<ProjectConfig | undefined> {
     const userId = context.from?.id;
-    return userId === undefined ? undefined : this.getActiveProject(userId);
+    return userId === undefined ? undefined : this.restoreActiveProject(userId);
   }
 
   private projectListOptions(): { readonly reply_markup: ReturnType<ProjectKeyboard["build"]> } {

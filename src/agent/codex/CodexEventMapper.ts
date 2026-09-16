@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ThreadEvent } from "@openai/codex-sdk";
 
 import type {
@@ -56,13 +57,18 @@ export class CodexEventMapper {
         return this.#mapThreadStarted(event);
       case "turn.started":
         return [this.#event({ type: "run_started" })];
-      case "turn.completed":
+      case "turn.completed": {
+        const question = decodeQuestionOutcome(this.#lastAgentMessage);
+        if (question !== undefined) {
+          return [this.#event({ type: "question", ...question })];
+        }
         return [
           this.#event({
             type: "completed",
             summary: this.#lastAgentMessage ?? "Codex turn completed.",
           }),
         ];
+      }
       case "turn.failed":
         return [
           this.#event({
@@ -275,6 +281,47 @@ export class CodexEventMapper {
       }),
     );
   }
+}
+
+/**
+ * Codex SDK 0.150 does not expose an input-request event.  A turn can instead
+ * deliberately finish with this small structured outcome in its final message.
+ */
+function decodeQuestionOutcome(message: string | undefined): {
+  readonly questionId: string;
+  readonly question: string;
+  readonly choices: readonly string[];
+} | undefined {
+  if (message === undefined) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(message) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (
+    !isRecord(value) ||
+    (value.kind !== "question" && value.kind !== "request_for_input" && value.kind !== "request-for-input") ||
+    typeof value.question !== "string"
+  ) {
+    return undefined;
+  }
+  const question = boundedString(value.question, "", MAX_MESSAGE_LENGTH).trim();
+  if (question.length === 0) return undefined;
+  if (value.choices !== undefined && !Array.isArray(value.choices)) return undefined;
+  const choices = (value.choices ?? []).flatMap((choice): string[] =>
+    typeof choice === "string" && choice.trim().length > 0
+      ? [boundedString(choice, "", MAX_MESSAGE_LENGTH).trim()]
+      : [],
+  );
+  if (choices.length !== (value.choices?.length ?? 0)) return undefined;
+  return Object.freeze({
+    questionId: typeof value.questionId === "string" && value.questionId.length > 0
+      ? boundedString(value.questionId, "", 128)
+      : randomUUID(),
+    question,
+    choices: Object.freeze(choices),
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

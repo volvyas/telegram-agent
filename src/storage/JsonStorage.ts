@@ -172,6 +172,18 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
     if (session.threadId !== undefined) assertNonEmptyString(session.threadId);
     if (session.startedAt !== undefined) assertTimestamp(session.startedAt);
     assertTimestamp(session.updatedAt);
+    if (session.pendingQuestion !== undefined) {
+      const question = session.pendingQuestion;
+      assert(isRecord(question), "invalid pending question");
+      assertNonEmptyString(question.questionId);
+      assertNonEmptyString(question.question);
+      assert(Array.isArray(question.choices), "invalid question choices");
+      for (const choice of question.choices) assertNonEmptyString(choice);
+      if (question.userId !== undefined) {
+        assert(typeof question.userId === "number" && Number.isSafeInteger(question.userId) && question.userId >= 0, "invalid question user");
+      }
+      assertTimestamp(question.createdAt);
+    }
   }
   assert(Array.isArray(value.tasks), "tasks must be an array");
   for (const task of value.tasks) {

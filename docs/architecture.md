@@ -412,5 +412,23 @@ confirmation.
 - **Phase 5:** logging, robust errors, message boundaries, security review, docs,
   systemd і acceptance.
 
+## Phase 2 smoke checklist
+
+Automated coverage in `tests/phase2/Phase2EndToEnd.test.ts` drives real grammY
+updates through `TelegramBot` and `CommandRouter`. It verifies two isolated
+projects, active-project switching, batched progress edits, restart recovery, a
+persisted pending question, and a plain-text answer sent to the original Codex
+thread.
+
+Before a release with a real Codex CLI and Telegram bot, an operator must also:
+
+- [ ] select each configured project and start one harmless task in each;
+- [ ] verify that progress is edited in one status message rather than flooding chat;
+- [ ] make Codex return a structured `{ "kind": "question" }` outcome, answer it
+  through Telegram, and confirm the same thread continues;
+- [ ] restart the gateway while waiting for that answer, then verify the dashboard,
+  pending question, and thread are restored;
+- [ ] confirm startup, task execution, and shutdown produce no Node deprecation warnings.
+
 Перед Phase 1 потрібно вирішити два локальні prerequisites з
 `environment.md`: створити Git repository та надати Telegram token/whitelist.
