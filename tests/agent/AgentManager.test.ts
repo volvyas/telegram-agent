@@ -12,6 +12,7 @@ import type {
   CodingAgent,
 } from "../../src/agent/CodingAgent.js";
 import type { AllowedOperation, ProjectConfig } from "../../src/config/ProjectConfig.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 
 const occurredAt = "2026-08-28T10:00:00.000Z";
 
@@ -93,7 +94,10 @@ describe("AgentManager", () => {
     motorGate.end();
     await first;
 
-    await expect(manager.startTask("motor", "After completion")).resolves.toBeUndefined();
+    await expect(manager.startTask("motor", "After completion")).resolves.toMatchObject({
+      projectId: "motor",
+      state: "COMPLETED",
+    });
   });
 
   it("allows different projects to run concurrently", async () => {
@@ -279,6 +283,7 @@ function createManager(agent: CodingAgent, onEvent?: (event: AgentEvent) => void
     ]),
     {
       clock: () => new Date(occurredAt),
+      gitService: CLEAN_GIT_STATUS_READER,
       ...(onEvent === undefined ? {} : { onEvent }),
     },
   );

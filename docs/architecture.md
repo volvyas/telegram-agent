@@ -329,6 +329,14 @@ persist-яться. Під час першого читання після resta
 - `spawn` only, `shell: false`;
 - executable та args typed/configured окремо;
 - before/after Git operations read-only до explicit feature tasks;
+- task result зберігає повні before/after snapshots; path, який був dirty до
+  task, завжди позначається як pre-existing, навіть якщо під час task він знову
+  змінився;
+- path-level comparison має attribution `observation_only`: gateway може
+  визначити, що path став dirty у проміжку між snapshots, але не приписує зміну
+  виключно агенту, бо зовнішні процеси можуть змінювати той самий worktree;
+- final numstat описує весь diff відносно HEAD після task, а не гарантований
+  agent-only delta; untracked files входять у changed-files, але не в numstat;
 - commit лише через gateway confirmation;
 - push/reset/clean/discard не реалізуються автоматично;
 - `.env`, auth storage, data і logs не комітяться.

@@ -1,7 +1,14 @@
 import type { AgentSession, PendingAgentQuestion } from "../domain/AgentSession.js";
 import type { ProjectConfig } from "../config/ProjectConfig.js";
+import {
+  createGitSnapshot,
+  createGitTaskSnapshot,
+  type GitSnapshot,
+} from "../domain/GitSnapshot.js";
+import type { TaskRecord } from "../domain/TaskRecord.js";
+import { GitService, type GitStatus } from "../git/GitService.js";
 import type { ProjectManager } from "../projects/ProjectManager.js";
-import type { AgentEvent } from "./AgentEvent.js";
+import type { AgentEvent, AgentQuestionEvent, AgentTerminalEvent } from "./AgentEvent.js";
 import { AgentStateMachine } from "./AgentStateMachine.js";
 import type { AgentState } from "./AgentState.js";
 import type { CodingAgent } from "./CodingAgent.js";
@@ -21,6 +28,11 @@ export interface AgentManagerOptions {
   readonly onEvent?: AgentEventListener;
   readonly clock?: () => Date;
   readonly sessionStore?: AgentSessionStore;
+  readonly gitService?: GitStatusReader;
+}
+
+export interface GitStatusReader {
+  getStatus(repositoryPath: string): Promise<GitStatus>;
 }
 
 export interface AgentStatus {
@@ -73,6 +85,7 @@ export class AgentManager {
   readonly #clock: () => Date;
   readonly #onEvent: AgentEventListener | undefined;
   readonly #sessionStore: AgentSessionStore | undefined;
+  readonly #gitService: GitStatusReader;
   readonly #sessions = new Map<string, ManagedSession>();
   readonly #activeOperations = new Map<string, ActiveOperation>();
 
@@ -86,10 +99,11 @@ export class AgentManager {
     this.#clock = options.clock ?? (() => new Date());
     this.#onEvent = options.onEvent;
     this.#sessionStore = options.sessionStore;
+    this.#gitService = options.gitService ?? new GitService();
   }
 
   /** Starts and consumes one complete agent turn. */
-  public async startTask(projectId: string, prompt: string, userId?: number): Promise<void> {
+  public async startTask(projectId: string, prompt: string, userId?: number): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
     if (!project.allowedOperations.has("task")) {
       throw new AgentManagerError(
@@ -108,8 +122,10 @@ export class AgentManager {
     const operation = createActiveOperation(projectId);
     this.#activeOperations.set(projectId, operation);
     let session: ManagedSession | undefined;
+    const startedAt = this.#clock().toISOString();
 
     try {
+      const before = await this.#captureGitSnapshot(project.path);
       const prepared = await this.#beginSession(project);
       session = prepared.session;
       await this.#persistSession(session);
@@ -135,7 +151,17 @@ export class AgentManager {
 
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
-      await this.#consumeEvents(session, run.runId, run.events, userId);
+      const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
+      const after = await this.#captureGitSnapshot(project.path);
+      return this.#createTaskRecord(
+        projectId,
+        run.runId,
+        startedAt,
+        terminalEvent,
+        before,
+        after,
+        session.machine.state,
+      );
     } catch (error) {
       let operationError = error;
       if (session?.machine.state === "RUNNING") {
@@ -181,7 +207,7 @@ export class AgentManager {
   }
 
   /** Sends an answer only to the pending question in the same project thread. */
-  public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number): Promise<void> {
+  public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
     if (this.#activeOperations.has(projectId)) {
       throw new AgentManagerError("OPERATION_ACTIVE", "An operation is already active for this project", projectId);
@@ -189,6 +215,7 @@ export class AgentManager {
     const operation = createActiveOperation(projectId);
     this.#activeOperations.set(projectId, operation);
     let session: ManagedSession | undefined;
+    const startedAt = this.#clock().toISOString();
     try {
       session = await this.#getWaitingSession(project);
       const pending = session.snapshot.pendingQuestion;
@@ -200,6 +227,7 @@ export class AgentManager {
       }
       const threadId = session.snapshot.threadId;
       if (threadId === undefined) throw new AgentManagerError("QUESTION_THREAD_MISSING", "The question has no resumable thread", projectId);
+      const before = await this.#captureGitSnapshot(project.path);
       session.machine.transition("user_answered");
       this.#updateSnapshot(session, { state: session.machine.state, activeRunId: undefined, lastEvent: undefined, pendingQuestion: undefined });
       await this.#persistSession(session);
@@ -207,7 +235,17 @@ export class AgentManager {
       if (run.projectId !== projectId) throw new AgentManagerError("RUN_PROJECT_MISMATCH", "Coding agent returned a run for another project", projectId);
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
-      await this.#consumeEvents(session, run.runId, run.events, userId);
+      const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
+      const after = await this.#captureGitSnapshot(project.path);
+      return this.#createTaskRecord(
+        projectId,
+        run.runId,
+        startedAt,
+        terminalEvent,
+        before,
+        after,
+        session.machine.state,
+      );
     } catch (error) {
       let operationError = error;
       if (session?.machine.state === "RUNNING") {
@@ -327,8 +365,8 @@ export class AgentManager {
     runId: string,
     events: AsyncIterable<AgentEvent>,
     userId?: number,
-  ): Promise<void> {
-    let terminal = false;
+  ): Promise<AgentTerminalEvent | AgentQuestionEvent> {
+    let terminalEvent: AgentTerminalEvent | AgentQuestionEvent | undefined;
     for await (const event of events) {
       if (event.projectId !== session.snapshot.projectId || event.runId !== runId) {
         throw new AgentManagerError(
@@ -337,7 +375,7 @@ export class AgentManager {
           session.snapshot.projectId,
         );
       }
-      if (terminal) {
+      if (terminalEvent !== undefined) {
         throw new AgentManagerError(
           "EVENT_AFTER_TERMINAL",
           "Coding agent emitted an event after a terminal outcome",
@@ -345,7 +383,7 @@ export class AgentManager {
         );
       }
 
-      terminal = this.#applyEvent(session, event);
+      terminalEvent = this.#applyEvent(session, event) ?? terminalEvent;
       this.#updateSnapshot(session, {
         state: session.machine.state,
         lastEvent: event,
@@ -356,34 +394,63 @@ export class AgentManager {
       await this.#onEvent?.(event);
     }
 
-    if (!terminal) {
+    if (terminalEvent === undefined) {
       throw new AgentManagerError(
         "EVENT_STREAM_INCOMPLETE",
         "Coding agent event stream ended without a terminal outcome",
         session.snapshot.projectId,
       );
     }
+    return terminalEvent;
   }
 
-  #applyEvent(session: ManagedSession, event: AgentEvent): boolean {
+  async #captureGitSnapshot(repositoryPath: string): Promise<GitSnapshot> {
+    const status = await this.#gitService.getStatus(repositoryPath);
+    return createGitSnapshot(status, this.#clock().toISOString());
+  }
+
+  #createTaskRecord(
+    projectId: string,
+    runId: string,
+    startedAt: string,
+    terminalEvent: AgentTerminalEvent | AgentQuestionEvent,
+    before: GitSnapshot,
+    after: GitSnapshot,
+    state: AgentState,
+  ): TaskRecord {
+    return Object.freeze({
+      projectId,
+      runId,
+      state,
+      startedAt,
+      finishedAt: this.#clock().toISOString(),
+      terminalEvent,
+      git: createGitTaskSnapshot(before, after),
+    });
+  }
+
+  #applyEvent(
+    session: ManagedSession,
+    event: AgentEvent,
+  ): AgentTerminalEvent | AgentQuestionEvent | undefined {
     switch (event.type) {
       case "question":
         session.machine.transition("agent_question");
-        return true;
+        return event;
       case "completed":
         session.machine.transition("turn_completed");
-        return true;
+        return event;
       case "stopped":
         session.machine.transition("stop_requested");
-        return true;
+        return event;
       case "error":
         if (event.fatal) {
           session.machine.transition("turn_failed");
-          return true;
+          return event as AgentTerminalEvent;
         }
-        return false;
+        return undefined;
       default:
-        return false;
+        return undefined;
     }
   }
 

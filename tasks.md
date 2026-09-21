@@ -441,7 +441,7 @@ events; Telegram flood не створюється.
 **Виконано 2026-09-16:** ESLint замінено на Biome, бо актуальний ESLint усе ще
 тягне `ajv 6 → uri-js → punycode`; `npm ls punycode puny --all` тепер порожній.
 
-### [ ] DEV-026 — Завершити Phase 2 наскрізним тестом
+### [x] DEV-025A — Завершити Phase 2 наскрізним тестом
 
 Перевірити два projects, окремі sessions, перемикання, питання/відповідь і
 restart gateway. Оновити `docs/architecture.md`, якщо реальна поведінка Codex
@@ -460,7 +460,7 @@ checklist і ще потребує виконання.
 
 ## Phase 3 — Git, тести, status і stop
 
-### [ ] DEV-026 — Реалізувати typed `GitService`
+### [x] DEV-026 — Реалізувати typed `GitService`
 
 **Класи:** `GitService`, `GitOutputParser`.
 
@@ -471,7 +471,11 @@ operations.
 **Готово, коли:** tests на temporary repositories покривають clean/dirty,
 staged/untracked, branch і filenames зі спецсимволами.
 
-### [ ] DEV-027 — Знімати Git snapshot до та після task
+**Виконано 2026-09-18:** додано read-only `GitService` поверх `ProcessRunner`,
+NUL-safe parsers для porcelain/numstat, typed branch/status/files summaries та
+temporary-repository tests для clean/dirty, staged/untracked і special filenames.
+
+### [x] DEV-027 — Знімати Git snapshot до та після task
 
 **Класи:** `GitSnapshot`, доповнення `AgentManager`/`TaskRecord`.
 
@@ -482,7 +486,11 @@ summary. Чітко відрізняти попередні user changes від 
 **Готово, коли:** task result містить before/after summary, а існуючі зміни не
 позначаються як безпечно створені лише агентом.
 
-### [ ] DEV-028 — Реалізувати `/git` та `/status`
+**Виконано 2026-09-21:** `AgentManager` повертає runtime `TaskRecord` з immutable
+before/after `GitSnapshot` і final numstat; path-level comparison відокремлює
+pre-existing changes від observed-during-task без хибної agent attribution.
+
+### [x] DEV-028 — Реалізувати `/git` та `/status`
 
 **Класи:** `GitHandler`, `StatusHandler`, dashboard formatter.
 
@@ -491,6 +499,10 @@ session та короткий Git summary. Дані беруться із сер
 handler.
 
 **Готово, коли:** handler tests покривають no project, clean/dirty та running task.
+
+**Виконано 2026-09-21:** додано typed `GitHandler`, `StatusHandler` і bounded
+dashboard formatter; `/git` показує branch/porcelain/files, `/status` — active
+project, agent/session state та Git summary. Команди підключено в application.
 
 ### [ ] DEV-029 — Реалізувати безпечний `/diff`
 

@@ -17,6 +17,8 @@ export type {
 } from "./AgentEvent.js";
 export type { AgentRun } from "./AgentRun.js";
 export type { AgentSession } from "../domain/AgentSession.js";
+export type { GitSnapshot, GitTaskComparison, GitTaskSnapshot } from "../domain/GitSnapshot.js";
+export type { TaskRecord } from "../domain/TaskRecord.js";
 export {
   AgentManager,
   AgentManagerError,
@@ -26,6 +28,7 @@ export type {
   AgentManagerOptions,
   AgentProjectRegistry,
   AgentStatus,
+  GitStatusReader,
 } from "./AgentManager.js";
 export {
   AGENT_STATES,

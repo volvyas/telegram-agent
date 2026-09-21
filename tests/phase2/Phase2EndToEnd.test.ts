@@ -19,6 +19,7 @@ import { TelegramBot } from "../../src/telegram/TelegramBot.js";
 import { AnswerHandler } from "../../src/telegram/handlers/AnswerHandler.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
 import { TaskHandler } from "../../src/telegram/handlers/TaskHandler.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 
 const temporaryDirectories: string[] = [];
 const occurredAt = "2026-09-16T10:00:00.000Z";
@@ -141,6 +142,7 @@ function gateway(
   const progress = new ProgressReporter();
   const manager = new AgentManager(agent, projects, {
     clock: () => new Date(occurredAt),
+    gitService: CLEAN_GIT_STATUS_READER,
     sessionStore: new SessionManager(storage, projects),
     onEvent: (event) => progress.onEvent(event),
   });

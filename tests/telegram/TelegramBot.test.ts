@@ -10,8 +10,11 @@ import type { ProjectManager } from "../../src/projects/ProjectManager.js";
 import { AuthGuard } from "../../src/telegram/AuthGuard.js";
 import { CommandRouter } from "../../src/telegram/CommandRouter.js";
 import type { AnswerHandler } from "../../src/telegram/handlers/AnswerHandler.js";
+import type { GitHandler } from "../../src/telegram/handlers/GitHandler.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
+import type { StatusHandler } from "../../src/telegram/handlers/StatusHandler.js";
 import { TaskHandler } from "../../src/telegram/handlers/TaskHandler.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 import { ProjectKeyboard } from "../../src/telegram/keyboards/ProjectKeyboard.js";
 import { TelegramBot } from "../../src/telegram/TelegramBot.js";
 
@@ -67,7 +70,10 @@ describe("TelegramBot", () => {
     const manager = projectManager();
     const projectHandler = new ProjectHandler(manager);
     const agent = new CompletingAgent();
-    const taskHandler = new TaskHandler(new AgentManager(agent, manager), projectHandler);
+    const taskHandler = new TaskHandler(
+      new AgentManager(agent, manager, { gitService: CLEAN_GIT_STATUS_READER }),
+      projectHandler,
+    );
     const sentMessages: string[] = [];
     const bot = new TelegramBot({
       token: "123456:test-token",
@@ -110,6 +116,34 @@ describe("TelegramBot", () => {
 
     expect(projectHandler.getActiveProject(42)?.id).toBe("api");
     expect(answerHandler.handleCallback).not.toHaveBeenCalled();
+  });
+
+  it("routes /git and /status to their dedicated handlers", async () => {
+    const projectHandler = new ProjectHandler(projectManager());
+    const gitHandler = {
+      handleGitCommand: vi.fn(() => Promise.resolve()),
+    } as unknown as GitHandler;
+    const statusHandler = {
+      handleStatusCommand: vi.fn(() => Promise.resolve()),
+    } as unknown as StatusHandler;
+    const bot = new TelegramBot({
+      token: "123456:test-token",
+      authGuard: new AuthGuard(new Set([42])),
+      commandRouter: new CommandRouter(
+        projectHandler,
+        undefined,
+        undefined,
+        gitHandler,
+        statusHandler,
+      ),
+      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+    });
+
+    await bot.handleUpdate(commandUpdate(42, "/git"));
+    await bot.handleUpdate(commandUpdate(42, "/status"));
+
+    expect(gitHandler.handleGitCommand).toHaveBeenCalledOnce();
+    expect(statusHandler.handleStatusCommand).toHaveBeenCalledOnce();
   });
 });
 

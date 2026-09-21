@@ -13,6 +13,9 @@ import { ProjectHandler } from "../telegram/handlers/ProjectHandler.js";
 import { TaskHandler } from "../telegram/handlers/TaskHandler.js";
 import { AnswerHandler } from "../telegram/handlers/AnswerHandler.js";
 import { ProgressReporter } from "../telegram/ProgressReporter.js";
+import { GitService } from "../git/GitService.js";
+import { GitHandler } from "../telegram/handlers/GitHandler.js";
+import { StatusHandler } from "../telegram/handlers/StatusHandler.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -84,14 +87,24 @@ export class Application {
       ...(config.codexHome === undefined ? {} : { codexHome: config.codexHome }),
     });
     const progressReporter = new ProgressReporter();
+    const gitService = new GitService();
     const agentManager = new AgentManager(adapter, projectManager, {
       sessionStore: sessionManager,
+      gitService,
       onEvent: (event) => progressReporter.onEvent(event),
     });
     const projectHandler = new ProjectHandler(projectManager, undefined, storage);
     const answerHandler = new AnswerHandler(agentManager, projectHandler, progressReporter);
     const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter);
-    const commandRouter = new CommandRouter(projectHandler, taskHandler, answerHandler);
+    const gitHandler = new GitHandler(projectHandler, gitService);
+    const statusHandler = new StatusHandler(projectHandler, agentManager, gitService);
+    const commandRouter = new CommandRouter(
+      projectHandler,
+      taskHandler,
+      answerHandler,
+      gitHandler,
+      statusHandler,
+    );
     const bot = new TelegramBot({
       token: config.telegramBotToken,
       authGuard: new AuthGuard(config.telegramAllowedUserIds),
