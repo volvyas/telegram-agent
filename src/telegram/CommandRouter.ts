@@ -5,6 +5,7 @@ import type { TaskHandler } from "./handlers/TaskHandler.js";
 import type { AnswerHandler } from "./handlers/AnswerHandler.js";
 import type { GitHandler } from "./handlers/GitHandler.js";
 import type { StatusHandler } from "./handlers/StatusHandler.js";
+import type { DiffHandler } from "./handlers/DiffHandler.js";
 
 export class CommandRouter {
   readonly #projectHandler: ProjectHandler;
@@ -12,6 +13,7 @@ export class CommandRouter {
   readonly #answerHandler: AnswerHandler | undefined;
   readonly #gitHandler: GitHandler | undefined;
   readonly #statusHandler: StatusHandler | undefined;
+  readonly #diffHandler: DiffHandler | undefined;
 
   public constructor(
     projectHandler: ProjectHandler,
@@ -19,12 +21,14 @@ export class CommandRouter {
     answerHandler?: AnswerHandler,
     gitHandler?: GitHandler,
     statusHandler?: StatusHandler,
+    diffHandler?: DiffHandler,
   ) {
     this.#projectHandler = projectHandler;
     this.#taskHandler = taskHandler;
     this.#answerHandler = answerHandler;
     this.#gitHandler = gitHandler;
     this.#statusHandler = statusHandler;
+    this.#diffHandler = diffHandler;
   }
 
   public register(bot: Bot): void {
@@ -48,6 +52,10 @@ export class CommandRouter {
     if (this.#statusHandler !== undefined) {
       const statusHandler = this.#statusHandler;
       bot.command("status", (context) => statusHandler.handleStatusCommand(context));
+    }
+    if (this.#diffHandler !== undefined) {
+      const diffHandler = this.#diffHandler;
+      bot.command("diff", (context) => diffHandler.handleDiffCommand(context));
     }
     if (this.#taskHandler !== undefined || this.#answerHandler !== undefined) {
       bot.on("message:text", async (context) => {

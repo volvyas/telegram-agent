@@ -14,7 +14,8 @@ import {
 
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-const GIT_PREFIX = ["--no-optional-locks"] as const;
+const GIT_DIFF_MAX_OUTPUT_BYTES = 20 * 1024 * 1024;
+const GIT_PREFIX = ["--no-optional-locks", "-c", "core.quotepath=false"] as const;
 
 export interface GitStatus {
   readonly branch: string | null;
@@ -22,6 +23,16 @@ export interface GitStatus {
   readonly porcelain: readonly GitPorcelainEntry[];
   readonly changedFiles: readonly string[];
   readonly numstat: GitNumstatSummary;
+}
+
+export interface GitDiff {
+  readonly content: string;
+  readonly byteLength: number;
+  readonly empty: boolean;
+}
+
+export interface GitDiffReader {
+  getDiff(repositoryPath: string): Promise<GitDiff>;
 }
 
 export class GitServiceError extends Error {
@@ -96,7 +107,40 @@ export class GitService {
     });
   }
 
-  async #git(repositoryPath: string, args: readonly string[]): Promise<ProcessResult> {
+  public async getDiff(repositoryPath: string): Promise<GitDiff> {
+    validateRepositoryPath(repositoryPath);
+    const headResult = await this.#git(
+      repositoryPath,
+      ["rev-parse", "--verify", "--quiet", "HEAD"],
+    );
+    const hasHead = readHeadState(headResult);
+    const commonArgs = [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+    ] as const;
+    const result = await this.#git(
+      repositoryPath,
+      hasHead
+        ? [...commonArgs, "HEAD", "--"]
+        : [...commonArgs, "--cached", "--"],
+      GIT_DIFF_MAX_OUTPUT_BYTES,
+    );
+    requireSuccess(result, "diff");
+
+    return Object.freeze({
+      content: result.stdout,
+      byteLength: Buffer.byteLength(result.stdout, "utf8"),
+      empty: result.stdout.length === 0,
+    });
+  }
+
+  async #git(
+    repositoryPath: string,
+    args: readonly string[],
+    maxOutputBytes = GIT_MAX_OUTPUT_BYTES,
+  ): Promise<ProcessResult> {
     try {
       return await this.#runner.run({
         executable: "git",
@@ -104,7 +148,7 @@ export class GitService {
         cwd: repositoryPath,
         env: this.#environment,
         timeoutMs: GIT_TIMEOUT_MS,
-        maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
+        maxOutputBytes,
       });
     } catch (error) {
       throw new GitServiceError("GIT_COMMAND_FAILED", "Unable to execute Git command", {

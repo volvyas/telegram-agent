@@ -13,6 +13,7 @@ import type { AnswerHandler } from "../../src/telegram/handlers/AnswerHandler.js
 import type { GitHandler } from "../../src/telegram/handlers/GitHandler.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
 import type { StatusHandler } from "../../src/telegram/handlers/StatusHandler.js";
+import type { DiffHandler } from "../../src/telegram/handlers/DiffHandler.js";
 import { TaskHandler } from "../../src/telegram/handlers/TaskHandler.js";
 import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 import { ProjectKeyboard } from "../../src/telegram/keyboards/ProjectKeyboard.js";
@@ -118,7 +119,7 @@ describe("TelegramBot", () => {
     expect(answerHandler.handleCallback).not.toHaveBeenCalled();
   });
 
-  it("routes /git and /status to their dedicated handlers", async () => {
+  it("routes /git, /status and /diff to their dedicated handlers", async () => {
     const projectHandler = new ProjectHandler(projectManager());
     const gitHandler = {
       handleGitCommand: vi.fn(() => Promise.resolve()),
@@ -126,6 +127,9 @@ describe("TelegramBot", () => {
     const statusHandler = {
       handleStatusCommand: vi.fn(() => Promise.resolve()),
     } as unknown as StatusHandler;
+    const diffHandler = {
+      handleDiffCommand: vi.fn(() => Promise.resolve()),
+    } as unknown as DiffHandler;
     const bot = new TelegramBot({
       token: "123456:test-token",
       authGuard: new AuthGuard(new Set([42])),
@@ -135,15 +139,18 @@ describe("TelegramBot", () => {
         undefined,
         gitHandler,
         statusHandler,
+        diffHandler,
       ),
       botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
     });
 
     await bot.handleUpdate(commandUpdate(42, "/git"));
     await bot.handleUpdate(commandUpdate(42, "/status"));
+    await bot.handleUpdate(commandUpdate(42, "/diff"));
 
     expect(gitHandler.handleGitCommand).toHaveBeenCalledOnce();
     expect(statusHandler.handleStatusCommand).toHaveBeenCalledOnce();
+    expect(diffHandler.handleDiffCommand).toHaveBeenCalledOnce();
   });
 });
 

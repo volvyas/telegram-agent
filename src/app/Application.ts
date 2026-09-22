@@ -16,6 +16,8 @@ import { ProgressReporter } from "../telegram/ProgressReporter.js";
 import { GitService } from "../git/GitService.js";
 import { GitHandler } from "../telegram/handlers/GitHandler.js";
 import { StatusHandler } from "../telegram/handlers/StatusHandler.js";
+import { DiffHandler } from "../telegram/handlers/DiffHandler.js";
+import { MessageSender } from "../telegram/MessageSender.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -98,12 +100,14 @@ export class Application {
     const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter);
     const gitHandler = new GitHandler(projectHandler, gitService);
     const statusHandler = new StatusHandler(projectHandler, agentManager, gitService);
+    const diffHandler = new DiffHandler(projectHandler, gitService, new MessageSender());
     const commandRouter = new CommandRouter(
       projectHandler,
       taskHandler,
       answerHandler,
       gitHandler,
       statusHandler,
+      diffHandler,
     );
     const bot = new TelegramBot({
       token: config.telegramBotToken,

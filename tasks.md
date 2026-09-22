@@ -504,7 +504,7 @@ handler.
 dashboard formatter; `/git` показує branch/porcelain/files, `/status` — active
 project, agent/session state та Git summary. Команди підключено в application.
 
-### [ ] DEV-029 — Реалізувати безпечний `/diff`
+### [x] DEV-029 — Реалізувати безпечний `/diff`
 
 **Класи:** `DiffHandler`, `MessageSender`.
 
@@ -513,6 +513,11 @@ project, agent/session state та Git summary. Команди підключен
 
 **Готово, коли:** tests покривають Unicode, code fences, великий diff і cleanup;
 жоден path/argument не формується з Telegram input.
+
+**Виконано 2026-09-22:** додано fixed-args `GitService.getDiff`, `DiffHandler` і
+`MessageSender`; малі diff надсилаються bounded plain-text chunks, великі — як
+temporary `changes.diff` з cleanup у `finally`. Покрито Unicode/code fences,
+unborn repository, upload failure cleanup та ігнорування command arguments.
 
 ### [ ] DEV-030 — Реалізувати `ProjectCommandRunner`
 

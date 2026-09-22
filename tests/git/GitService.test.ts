@@ -116,6 +116,25 @@ describe("GitService", () => {
       },
     ]);
     expect(status.numstat).toMatchObject({ filesChanged: 1, additions: 2, deletions: 0 });
+    await expect(new GitService().getDiff(repository)).resolves.toMatchObject({
+      empty: false,
+      content: expect.stringContaining("+one"),
+    });
+  });
+
+  it("returns one fixed-argument diff containing staged, unstaged and Unicode changes", async () => {
+    const repository = await createRepository();
+    await appendFile(join(repository, "README.md"), "Привіт ```diff\n");
+    await writeFile(join(repository, "новий файл.txt"), "рядок\n");
+    await git(repository, ["add", "--", "новий файл.txt"]);
+
+    const diff = await new GitService().getDiff(repository);
+
+    expect(diff.empty).toBe(false);
+    expect(diff.byteLength).toBe(Buffer.byteLength(diff.content, "utf8"));
+    expect(diff.content).toContain("Привіт ```diff");
+    expect(diff.content).toContain("новий файл.txt");
+    expect(diff.content).toContain("+рядок");
   });
 
   it("rejects invalid paths and non-repositories with typed errors", async () => {
