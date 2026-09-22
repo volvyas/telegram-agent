@@ -18,6 +18,13 @@ import { GitHandler } from "../telegram/handlers/GitHandler.js";
 import { StatusHandler } from "../telegram/handlers/StatusHandler.js";
 import { DiffHandler } from "../telegram/handlers/DiffHandler.js";
 import { MessageSender } from "../telegram/MessageSender.js";
+import { ProjectCommandRunner } from "../process/ProjectCommandRunner.js";
+import { TestHandler } from "../telegram/handlers/TestHandler.js";
+import { StopHandler } from "../telegram/handlers/StopHandler.js";
+import { HelpHandler } from "../telegram/handlers/HelpHandler.js";
+import { LogHandler } from "../telegram/handlers/LogHandler.js";
+import { ContinueHandler } from "../telegram/handlers/ContinueHandler.js";
+import { DashboardKeyboard } from "../telegram/keyboards/DashboardKeyboard.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -95,12 +102,23 @@ export class Application {
       gitService,
       onEvent: (event) => progressReporter.onEvent(event),
     });
-    const projectHandler = new ProjectHandler(projectManager, undefined, storage);
+    const dashboardKeyboard = new DashboardKeyboard();
+    const projectHandler = new ProjectHandler(projectManager, undefined, storage, dashboardKeyboard);
     const answerHandler = new AnswerHandler(agentManager, projectHandler, progressReporter);
     const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter);
     const gitHandler = new GitHandler(projectHandler, gitService);
     const statusHandler = new StatusHandler(projectHandler, agentManager, gitService);
     const diffHandler = new DiffHandler(projectHandler, gitService, new MessageSender());
+    const testHandler = new TestHandler(
+      projectHandler,
+      new ProjectCommandRunner(),
+      agentManager,
+      new MessageSender(),
+    );
+    const stopHandler = new StopHandler(projectHandler, agentManager);
+    const helpHandler = new HelpHandler();
+    const logHandler = new LogHandler(projectHandler, storage);
+    const continueHandler = new ContinueHandler(agentManager, projectHandler, progressReporter);
     const commandRouter = new CommandRouter(
       projectHandler,
       taskHandler,
@@ -108,6 +126,12 @@ export class Application {
       gitHandler,
       statusHandler,
       diffHandler,
+      testHandler,
+      stopHandler,
+      helpHandler,
+      logHandler,
+      continueHandler,
+      dashboardKeyboard,
     );
     const bot = new TelegramBot({
       token: config.telegramBotToken,

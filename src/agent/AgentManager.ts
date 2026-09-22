@@ -42,6 +42,15 @@ export interface AgentStatus {
   readonly runId?: string;
 }
 
+/** Coordinates work that must not overlap with an active coding-agent turn. */
+export interface ProjectOperationCoordinator {
+  runExclusive<T>(projectId: string, operation: string, action: (signal: AbortSignal) => Promise<T>): Promise<T>;
+}
+
+export interface ProjectOperationStopper {
+  stop(projectId: string): Promise<boolean>;
+}
+
 export class AgentManagerError extends Error {
   public readonly code: string;
   public readonly projectId: string;
@@ -68,7 +77,11 @@ interface ActiveOperation {
   readonly token: symbol;
   readonly finished: Promise<void>;
   readonly finish: () => void;
+  readonly kind: "agent" | "external";
+  readonly controller: AbortController;
+  stopRequested: boolean;
   runId?: string;
+  session?: ManagedSession;
 }
 
 type AgentSessionPatch = Partial<
@@ -79,7 +92,7 @@ type AgentSessionPatch = Partial<
   readonly pendingQuestion?: PendingAgentQuestion | undefined;
 };
 
-export class AgentManager {
+export class AgentManager implements ProjectOperationCoordinator, ProjectOperationStopper {
   readonly #agent: CodingAgent;
   readonly #projects: AgentProjectRegistry;
   readonly #clock: () => Date;
@@ -119,7 +132,7 @@ export class AgentManager {
         projectId,
       );
     }
-    const operation = createActiveOperation(projectId);
+    const operation = createActiveOperation(projectId, "agent");
     this.#activeOperations.set(projectId, operation);
     let session: ManagedSession | undefined;
     const startedAt = this.#clock().toISOString();
@@ -128,6 +141,7 @@ export class AgentManager {
       const before = await this.#captureGitSnapshot(project.path);
       const prepared = await this.#beginSession(project);
       session = prepared.session;
+      operation.session = session;
       await this.#persistSession(session);
       const run = prepared.threadId === undefined
         ? await this.#agent.start({
@@ -151,6 +165,7 @@ export class AgentManager {
 
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
+      if (operation.stopRequested) await this.#agent.stop(run.runId);
       const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
       const after = await this.#captureGitSnapshot(project.path);
       return this.#createTaskRecord(
@@ -206,13 +221,71 @@ export class AgentManager {
     });
   }
 
+  /**
+   * Reserves a project while a non-agent operation is running.  This shares the
+   * same reservation map as agent turns, so a test cannot race a task.
+   */
+  public async runExclusive<T>(
+    projectId: string,
+    operationName: string,
+    action: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    this.#projects.require(projectId);
+    if (this.#activeOperations.has(projectId)) {
+      throw new AgentManagerError(
+        "OPERATION_ACTIVE",
+        "An operation is already active for this project",
+        projectId,
+      );
+    }
+
+    const operation = createActiveOperation(projectId, "external");
+    this.#activeOperations.set(projectId, operation);
+    try {
+      return await action(operation.controller.signal);
+    } catch (error) {
+      if (error instanceof AgentManagerError) throw error;
+      throw new AgentManagerError(
+        "OPERATION_FAILED",
+        `Unable to run ${operationName} operation`,
+        projectId,
+        { cause: error },
+      );
+    } finally {
+      if (this.#activeOperations.get(projectId)?.token === operation.token) {
+        this.#activeOperations.delete(projectId);
+      }
+      operation.finish();
+    }
+  }
+
+  /** Requests cancellation for the active task or configured command. */
+  public async stop(projectId: string): Promise<boolean> {
+    this.#projects.require(projectId);
+    const operation = this.#activeOperations.get(projectId);
+    if (operation === undefined) return false;
+
+    operation.stopRequested = true;
+    operation.controller.abort();
+    if (operation.kind === "agent") {
+      const session = operation.session;
+      if (session?.machine.can("stop_requested")) {
+        session.machine.transition("stop_requested");
+        this.#updateSnapshot(session, { state: session.machine.state });
+        await this.#persistSession(session);
+      }
+      if (operation.runId !== undefined) await this.#agent.stop(operation.runId);
+    }
+    return true;
+  }
+
   /** Sends an answer only to the pending question in the same project thread. */
   public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
     if (this.#activeOperations.has(projectId)) {
       throw new AgentManagerError("OPERATION_ACTIVE", "An operation is already active for this project", projectId);
     }
-    const operation = createActiveOperation(projectId);
+    const operation = createActiveOperation(projectId, "agent");
     this.#activeOperations.set(projectId, operation);
     let session: ManagedSession | undefined;
     const startedAt = this.#clock().toISOString();
@@ -267,6 +340,20 @@ export class AgentManager {
     return this.#sessions.get(projectId)?.snapshot;
   }
 
+  /** Loads a persisted session when continuation is requested after restart. */
+  public async getSessionForContinuation(projectId: string): Promise<AgentSession | undefined> {
+    this.#projects.require(projectId);
+    let session = this.#sessions.get(projectId);
+    if (session === undefined) {
+      const restored = await this.#sessionStore?.getSession(projectId);
+      if (restored !== undefined) {
+        session = { machine: new AgentStateMachine(restored.state, this.#clock), snapshot: restored };
+        this.#sessions.set(projectId, session);
+      }
+    }
+    return session?.snapshot;
+  }
+
   /** Restores a persisted pending question when this manager was recreated. */
   public async getPendingQuestion(projectId: string): Promise<PendingAgentQuestion | undefined> {
     const project = this.#projects.require(projectId);
@@ -283,11 +370,9 @@ export class AgentManager {
 
   /** Requests cancellation for every run currently owned by this manager. */
   public async stopAll(): Promise<void> {
+    const projectIds = [...this.#activeOperations.keys()];
     const operations = [...this.#activeOperations.values()];
-    const runIds = operations
-      .map((operation) => operation.runId)
-      .filter((runId): runId is string => runId !== undefined);
-    await Promise.all(runIds.map((runId) => this.#agent.stop(runId)));
+    await Promise.all(projectIds.map((projectId) => this.stop(projectId)));
     await Promise.all(operations.map((operation) => operation.finished));
   }
 
@@ -435,17 +520,17 @@ export class AgentManager {
   ): AgentTerminalEvent | AgentQuestionEvent | undefined {
     switch (event.type) {
       case "question":
-        session.machine.transition("agent_question");
+        if (session.machine.can("agent_question")) session.machine.transition("agent_question");
         return event;
       case "completed":
-        session.machine.transition("turn_completed");
+        if (session.machine.can("turn_completed")) session.machine.transition("turn_completed");
         return event;
       case "stopped":
-        session.machine.transition("stop_requested");
+        if (session.machine.can("stop_requested")) session.machine.transition("stop_requested");
         return event;
       case "error":
         if (event.fatal) {
-          session.machine.transition("turn_failed");
+          if (session.machine.can("turn_failed")) session.machine.transition("turn_failed");
           return event as AgentTerminalEvent;
         }
         return undefined;
@@ -491,12 +576,12 @@ export class AgentManager {
   }
 }
 
-function createActiveOperation(projectId: string): ActiveOperation {
+function createActiveOperation(projectId: string, kind: ActiveOperation["kind"]): ActiveOperation {
   let finish = (): void => undefined;
   const finished = new Promise<void>((resolve) => {
     finish = resolve;
   });
-  return { token: Symbol(projectId), finished, finish };
+  return { token: Symbol(projectId), finished, finish, kind, controller: new AbortController(), stopRequested: false };
 }
 
 function toPendingQuestion(event: Extract<AgentEvent, { readonly type: "question" }>, userId?: number): PendingAgentQuestion {

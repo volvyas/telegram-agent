@@ -100,6 +100,33 @@ describe("AgentManager", () => {
     });
   });
 
+  it("stops an active task without discarding its resumable session", async () => {
+    const gate = deferredEvents();
+    const agent = new FakeCodingAgent((options) => run(
+      options.projectId,
+      "RUN-motor",
+      gate.events,
+    ));
+    const manager = createManager(agent);
+
+    const running = manager.startTask("motor", "Stop me");
+    await vi.waitFor(() => {
+      expect(manager.getStatus("motor")).toMatchObject({ active: true, runId: "RUN-motor" });
+    });
+
+    await expect(manager.stop("motor")).resolves.toBe(true);
+    expect(agent.stops).toEqual(["RUN-motor"]);
+    expect(manager.getStatus("motor")).toMatchObject({ state: "STOPPED", active: true });
+
+    gate.push(event("stopped", "motor", "RUN-motor", { reason: "user" }));
+    gate.end();
+    await running;
+
+    expect(manager.getSession("motor")).toMatchObject({ state: "STOPPED" });
+    expect(manager.getSession("motor")).not.toHaveProperty("activeRunId");
+    await expect(manager.stop("motor")).resolves.toBe(false);
+  });
+
   it("allows different projects to run concurrently", async () => {
     const gates = new Map([
       ["motor", deferredEvents()],

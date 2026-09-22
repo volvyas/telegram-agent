@@ -7,6 +7,7 @@ const DEFAULT_INLINE_DIFF_BYTES = 12 * 1024;
 const DIFF_CHUNK_CHARACTERS = 3_900;
 const TEMPORARY_PREFIX = "telegram-agent-diff-";
 const DIFF_FILE_NAME = "changes.diff";
+const TEST_OUTPUT_FILE_NAME = "test-output.txt";
 
 export interface MessageTransport {
   sendText(text: string): Promise<void>;
@@ -67,6 +68,47 @@ export class MessageSender {
         filename: DIFF_FILE_NAME,
         caption: "Git diff",
       });
+      return Object.freeze({ kind: "document" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  /** Delivers command output safely, using a document when it is too large. */
+  public async sendTestOutput(
+    transport: MessageTransport,
+    content: string,
+  ): Promise<DiffDelivery> {
+    return this.#sendOutput(
+      transport,
+      content,
+      "Test output",
+      TEST_OUTPUT_FILE_NAME,
+    );
+  }
+
+  async #sendOutput(
+    transport: MessageTransport,
+    content: string,
+    label: string,
+    filename: string,
+  ): Promise<DiffDelivery> {
+    if (content.length === 0) return Object.freeze({ kind: "empty" });
+    if (Buffer.byteLength(content, "utf8") <= this.#inlineDiffBytes) {
+      const chunks = splitText(content, DIFF_CHUNK_CHARACTERS);
+      for (const [index, chunk] of chunks.entries()) {
+        await transport.sendText(
+          `${label} (${String(index + 1)}/${String(chunks.length)}):\n${chunk}`,
+        );
+      }
+      return Object.freeze({ kind: "messages", count: chunks.length });
+    }
+
+    const directory = await mkdtemp(join(this.#temporaryRoot, TEMPORARY_PREFIX));
+    const path = join(directory, filename);
+    try {
+      await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
+      await transport.sendDocument(path, { filename, caption: label });
       return Object.freeze({ kind: "document" });
     } finally {
       await rm(directory, { recursive: true, force: true });

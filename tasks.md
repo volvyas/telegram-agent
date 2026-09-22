@@ -519,7 +519,7 @@ project, agent/session state та Git summary. Команди підключен
 temporary `changes.diff` з cleanup у `finally`. Покрито Unicode/code fences,
 unborn repository, upload failure cleanup та ігнорування command arguments.
 
-### [ ] DEV-030 — Реалізувати `ProjectCommandRunner`
+### [X] DEV-030 — Реалізувати `ProjectCommandRunner`
 
 **Клас:** `ProjectCommandRunner`.
 
@@ -530,7 +530,7 @@ config безпечно токенізувати або, бажано, збер�
 **Готово, коли:** tests доводять correct cwd, streaming, timeout/stop та
 відсутність shell injection.
 
-### [ ] DEV-031 — Реалізувати `/test`
+### [X] DEV-031 — Реалізувати `/test`
 
 **Класи:** `TestHandler`, доповнення `AgentManager` або operation coordinator.
 
@@ -540,7 +540,12 @@ config безпечно токенізувати або, бажано, збер�
 
 **Готово, коли:** tests покривають no command, pass, fail, timeout і busy project.
 
-### [ ] DEV-032 — Реалізувати `/stop`
+**Виконано 2026-09-22:** додано `TestHandler`, безпечний запуск configured
+test command, progress/result повідомлення й надсилання великого output як
+temporary document. `AgentManager` тепер координує project-wide exclusive
+operations, тому `/test` не конфліктує з active coding task.
+
+### [X] DEV-032 — Реалізувати `/stop`
 
 **Класи:** `StopHandler`, доповнення `AgentManager`, `ProcessRunner`.
 
@@ -551,7 +556,12 @@ config безпечно токенізувати або, бажано, збер�
 **Готово, коли:** integration test не залишає child process, а session можна
 продовжити після stop згідно з можливостями CLI.
 
-### [ ] DEV-033 — Додати `/help`, `/log` і `/continue`
+**Виконано 2026-09-22:** додано idempotent `StopHandler` і coordinator-backed
+cancel для agent/test operations. Test process отримує abort signal до
+`ProcessRunner`, який graceful завершує process group і після grace period
+примусово вбиває tree; agent session переходить у `STOPPED` без втрати thread.
+
+### [X] DEV-033 — Додати `/help`, `/log` і `/continue`
 
 **Класи:** відповідні handlers і command registration.
 
@@ -561,7 +571,11 @@ raw secret-bearing logs; `/continue` продовжує останню resumable
 
 **Готово, коли:** command parser/handler tests покривають усі гілки.
 
-### [ ] DEV-034 — Завершити Phase 3 dashboard UX
+**Виконано 2026-09-22:** додано handlers для фактичного command surface,
+bounded project task log та безпечного продовження resumable session із
+поясненням для missing/waiting/active станів.
+
+### [X] DEV-034 — Завершити Phase 3 dashboard UX
 
 **Класи:** keyboards і callback handlers для Status/New task/Diff/Tests/Stop.
 
@@ -570,6 +584,10 @@ raw secret-bearing logs; `/continue` продовжує останню resumable
 
 **Готово, коли:** dashboard actions делегують тим самим services, що й slash
 commands; mocked Telegram flow повністю зелений.
+
+**Виконано 2026-09-22:** dashboard отримує bounded opaque callbacks для New
+task/Status/Git/Diff/Tests/Stop; callbacks перевіряють authenticated user,
+active project і дозволену operation та делегують існуючим handlers.
 
 ---
 

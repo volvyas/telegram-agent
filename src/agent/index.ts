@@ -27,6 +27,8 @@ export type {
   AgentEventListener,
   AgentManagerOptions,
   AgentProjectRegistry,
+  ProjectOperationCoordinator,
+  ProjectOperationStopper,
   AgentStatus,
   GitStatusReader,
 } from "./AgentManager.js";

@@ -80,6 +80,26 @@ describe("MessageSender", () => {
     expect(documentPath).toBeDefined();
     await expect(access(documentPath ?? "missing")).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("sends large test output as a temporary document", async () => {
+    const root = await temporaryDirectory();
+    let uploadedContent: string | undefined;
+    const transport: MessageTransport = {
+      sendText: vi.fn(() => Promise.resolve()),
+      sendDocument: vi.fn(async (path, options) => {
+        uploadedContent = await readFile(path, "utf8");
+        expect(options).toEqual({ filename: "test-output.txt", caption: "Test output" });
+      }),
+    };
+    const content = "test output\n".repeat(20);
+
+    await expect(
+      new MessageSender({ temporaryRoot: root, inlineDiffBytes: 10 })
+        .sendTestOutput(transport, content),
+    ).resolves.toEqual({ kind: "document" });
+
+    expect(uploadedContent).toBe(content);
+  });
 });
 
 function textTransport(messages: string[]): MessageTransport & {

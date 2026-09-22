@@ -4,6 +4,7 @@ import type { ProjectConfig } from "../../config/ProjectConfig.js";
 import type { ProjectManager } from "../../projects/ProjectManager.js";
 import type { Storage } from "../../storage/Storage.js";
 import { ProjectKeyboard } from "../keyboards/ProjectKeyboard.js";
+import type { DashboardKeyboard } from "../keyboards/DashboardKeyboard.js";
 
 const UNKNOWN_PROJECT_MESSAGE = "Unknown project.";
 
@@ -12,15 +13,18 @@ export class ProjectHandler {
   readonly #keyboard: ProjectKeyboard;
   readonly #activeProjects = new Map<number, string>();
   readonly #storage: Storage | undefined;
+  readonly #dashboard: DashboardKeyboard | undefined;
 
   public constructor(
     projectManager: ProjectManager,
     keyboard = new ProjectKeyboard(),
     storage?: Storage,
+    dashboard?: DashboardKeyboard,
   ) {
     this.#projectManager = projectManager;
     this.#keyboard = keyboard;
     this.#storage = storage;
+    this.#dashboard = dashboard;
   }
 
   public async handleStart(context: Context): Promise<void> {
@@ -33,7 +37,7 @@ export class ProjectHandler {
       return;
     }
 
-    await context.reply(formatDashboard(activeProject));
+    await this.replyDashboard(context, activeProject);
   }
 
   public async handleProjects(context: Context): Promise<void> {
@@ -97,12 +101,20 @@ export class ProjectHandler {
         },
       }));
     }
-    await context.reply(formatDashboard(project));
+    await this.replyDashboard(context, project);
   }
 
   private async activeProjectFor(context: Context): Promise<ProjectConfig | undefined> {
     const userId = context.from?.id;
     return userId === undefined ? undefined : this.restoreActiveProject(userId);
+  }
+
+  private async replyDashboard(context: Context, project: ProjectConfig): Promise<void> {
+    if (this.#dashboard === undefined) {
+      await context.reply(formatDashboard(project));
+      return;
+    }
+    await context.reply(formatDashboard(project), { reply_markup: this.#dashboard.build(project) });
   }
 
   private projectListOptions(): { readonly reply_markup: ReturnType<ProjectKeyboard["build"]> } {
