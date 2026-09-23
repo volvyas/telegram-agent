@@ -4,6 +4,7 @@ import {
   type ProcessResult,
 } from "./ProcessRunner.js";
 import type { ProjectCommand, ProjectConfig } from "../config/ProjectConfig.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../policy/OperationPolicy.js";
 
 export type ProjectCommandOperation = "test" | "build" | "run";
 
@@ -52,12 +53,15 @@ export class ProjectCommandRunner {
   readonly #environment: Readonly<Record<string, string>>;
   readonly #defaults: ProjectCommandRunnerOptions;
   readonly #active = new Map<string, AbortController>();
+  readonly #policy: OperationPolicy;
 
   public constructor(
     runner = new ProcessRunner(),
     options: ProjectCommandRunnerOptions = {},
+    policy = DEFAULT_OPERATION_POLICY,
   ) {
     this.#runner = runner;
+    this.#policy = policy;
     this.#defaults = Object.freeze({ ...options });
     this.#environment = Object.freeze(
       options.environment === undefined
@@ -91,7 +95,7 @@ export class ProjectCommandRunner {
         operation,
       );
     }
-    if (!project.allowedOperations.has(operation)) {
+    if (this.#policy.evaluate(project, operation).kind === "forbidden") {
       throw new ProjectCommandRunnerError(
         "OPERATION_NOT_ALLOWED",
         `Operation ${operation} is not allowed for project`,

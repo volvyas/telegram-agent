@@ -1,18 +1,18 @@
 import type { Context } from "grammy";
 
 import type { ProjectHandler } from "./ProjectHandler.js";
-import type { PersistedTaskRecord, Storage } from "../../storage/Storage.js";
+import type { PersistedTaskRecord } from "../../storage/Storage.js";
 
 const MAX_RECORDS = 10;
 const MAX_MESSAGE_LENGTH = 4_096;
 
 export class LogHandler {
   readonly #projects: ProjectHandler;
-  readonly #storage: Storage;
+  readonly #tasks: TaskHistoryReader;
 
-  public constructor(projects: ProjectHandler, storage: Storage) {
+  public constructor(projects: ProjectHandler, tasks: TaskHistoryReader) {
     this.#projects = projects;
-    this.#storage = storage;
+    this.#tasks = tasks;
   }
 
   public async handleLogCommand(context: Context): Promise<void> {
@@ -26,15 +26,16 @@ export class LogHandler {
     }
 
     try {
-      const records = (await this.#storage.load()).tasks
-        .filter((record) => record.projectId === project.id)
-        .slice(-MAX_RECORDS)
-        .reverse();
+      const records = await this.#tasks.recent(project.id, MAX_RECORDS);
       await context.reply(formatLog(project.name, records));
     } catch {
       await context.reply("Unable to read task log.");
     }
   }
+}
+
+export interface TaskHistoryReader {
+  recent(projectId: string, limit: number): Promise<readonly PersistedTaskRecord[]>;
 }
 
 function formatLog(projectName: string, records: readonly PersistedTaskRecord[]): string {

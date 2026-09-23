@@ -3,16 +3,19 @@ import type { Context } from "grammy";
 import type { AgentManager } from "../../agent/AgentManager.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
 import type { ProgressReporter, ProgressTransport } from "../ProgressReporter.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../../policy/OperationPolicy.js";
 
 export class ContinueHandler {
   readonly #agent: AgentManager;
   readonly #projects: ProjectHandler;
   readonly #progress: ProgressReporter | undefined;
+  readonly #policy: OperationPolicy;
 
-  public constructor(agent: AgentManager, projects: ProjectHandler, progress?: ProgressReporter) {
+  public constructor(agent: AgentManager, projects: ProjectHandler, progress?: ProgressReporter, policy = DEFAULT_OPERATION_POLICY) {
     this.#agent = agent;
     this.#projects = projects;
     this.#progress = progress;
+    this.#policy = policy;
   }
 
   public async handleContinueCommand(context: Context): Promise<void> {
@@ -24,7 +27,7 @@ export class ContinueHandler {
       await context.reply("Select a project first with /projects.");
       return;
     }
-    if (!project.allowedOperations.has("task")) {
+    if (this.#policy.evaluate(project, "task").kind === "forbidden") {
       await context.reply("Tasks are not allowed for this project.");
       return;
     }

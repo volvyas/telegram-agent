@@ -3,14 +3,17 @@ import type { Context } from "grammy";
 import type { GitStatusReader } from "../../agent/AgentManager.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
 import { formatGitDashboard } from "../DashboardFormatter.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../../policy/OperationPolicy.js";
 
 export class GitHandler {
   readonly #projects: ProjectHandler;
   readonly #git: GitStatusReader;
+  readonly #policy: OperationPolicy;
 
-  public constructor(projects: ProjectHandler, git: GitStatusReader) {
+  public constructor(projects: ProjectHandler, git: GitStatusReader, policy = DEFAULT_OPERATION_POLICY) {
     this.#projects = projects;
     this.#git = git;
+    this.#policy = policy;
   }
 
   public async handleGitCommand(context: Context): Promise<void> {
@@ -22,7 +25,7 @@ export class GitHandler {
       await context.reply("Select a project first with /projects.");
       return;
     }
-    if (!project.allowedOperations.has("git")) {
+    if (this.#policy.evaluate(project, "git").kind === "forbidden") {
       await context.reply("Git status is not allowed for this project.");
       return;
     }

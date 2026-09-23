@@ -25,6 +25,11 @@ import { HelpHandler } from "../telegram/handlers/HelpHandler.js";
 import { LogHandler } from "../telegram/handlers/LogHandler.js";
 import { ContinueHandler } from "../telegram/handlers/ContinueHandler.js";
 import { DashboardKeyboard } from "../telegram/keyboards/DashboardKeyboard.js";
+import { TaskManager } from "../tasks/TaskManager.js";
+import { ConfirmationService } from "../confirmations/ConfirmationService.js";
+import { ConfirmationHandler } from "../telegram/handlers/ConfirmationHandler.js";
+import { CommitHandler } from "../telegram/handlers/CommitHandler.js";
+import { StructuredLogger } from "../logging/StructuredLogger.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -85,11 +90,20 @@ export class Application {
           })
         : new ConfigLoader(options.environment, options.cwd ?? process.cwd()));
     const config = configLoader.loadAppConfig();
+    const logger = new StructuredLogger({
+      level: config.logLevel,
+      secrets: [config.telegramBotToken, ...(config.codexHome === undefined ? [] : [config.codexHome])],
+    });
     const projectsDocument = await configLoader.loadProjectsDocument(config);
     const projectManager = await ProjectManager.fromDocument(projectsDocument);
     const dataDirectory = resolve(options.cwd ?? process.cwd(), "data");
     const storage = new JsonStorage(dataDirectory);
     const sessionManager = new SessionManager(storage, projectManager);
+    const taskManager = new TaskManager(storage);
+    const confirmationService = new ConfirmationService(storage);
+    await sessionManager.reconcileInterrupted();
+    await taskManager.reconcileInterrupted();
+    await confirmationService.expireExpired();
     const environment = { ...(options.environment ?? process.env) };
     const adapter = new CodexAdapter({
       environment,
@@ -100,6 +114,7 @@ export class Application {
     const agentManager = new AgentManager(adapter, projectManager, {
       sessionStore: sessionManager,
       gitService,
+      taskStore: taskManager,
       onEvent: (event) => progressReporter.onEvent(event),
     });
     const dashboardKeyboard = new DashboardKeyboard();
@@ -117,8 +132,18 @@ export class Application {
     );
     const stopHandler = new StopHandler(projectHandler, agentManager);
     const helpHandler = new HelpHandler();
-    const logHandler = new LogHandler(projectHandler, storage);
+    const logHandler = new LogHandler(projectHandler, taskManager);
     const continueHandler = new ContinueHandler(agentManager, projectHandler, progressReporter);
+    const confirmationHandler = new ConfirmationHandler(
+      confirmationService,
+      projectHandler,
+    );
+    const commitHandler = new CommitHandler(
+      projectHandler,
+      gitService,
+      agentManager,
+      confirmationHandler,
+    );
     const commandRouter = new CommandRouter(
       projectHandler,
       taskHandler,
@@ -132,12 +157,14 @@ export class Application {
       logHandler,
       continueHandler,
       dashboardKeyboard,
+      confirmationHandler,
+      commitHandler,
     );
     const bot = new TelegramBot({
       token: config.telegramBotToken,
       authGuard: new AuthGuard(config.telegramAllowedUserIds),
       commandRouter,
-      logger: console,
+      logger,
     });
 
     return new Application({

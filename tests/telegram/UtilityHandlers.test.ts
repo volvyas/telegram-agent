@@ -4,8 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../src/domain/AgentSession.js";
 import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 import type { ProjectManager } from "../../src/projects/ProjectManager.js";
-import type { Storage } from "../../src/storage/Storage.js";
-import { createEmptyPersistedState } from "../../src/storage/Storage.js";
 import { ContinueHandler } from "../../src/telegram/handlers/ContinueHandler.js";
 import { HelpHandler } from "../../src/telegram/handlers/HelpHandler.js";
 import { LogHandler } from "../../src/telegram/handlers/LogHandler.js";
@@ -22,13 +20,16 @@ describe("utility command handlers", () => {
     const reply = vi.fn(() => Promise.resolve());
     const projects = projectHandler();
     await select(projects, reply);
-    const storage = fakeStorage({
-      tasks: [{ id: "TASK-1", projectId: "api", promptSummary: "safe summary", status: "completed", createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:01:00.000Z" }],
-    });
+    const tasks = {
+      recent: vi.fn(async () => [
+        { id: "TASK-1", projectId: "api", promptSummary: "safe summary", status: "completed" as const, createdAt: "2026-09-22T00:00:00.000Z", updatedAt: "2026-09-22T00:01:00.000Z" },
+      ]),
+    };
 
-    await new LogHandler(projects, storage).handleLogCommand(context(reply));
+    await new LogHandler(projects, tasks).handleLogCommand(context(reply));
 
     expect(reply).toHaveBeenCalledWith(expect.stringContaining("TASK-1 · completed · safe summary"));
+    expect(tasks.recent).toHaveBeenCalledWith("api", 10);
   });
 
   it("continue explains waiting and missing sessions", async () => {
@@ -79,13 +80,4 @@ async function select(projects: ProjectHandler, reply: ReturnType<typeof vi.fn>)
 
 function context(reply: ReturnType<typeof vi.fn>): Context {
   return { from: { id: 42 }, message: { text: "/command" }, reply } as unknown as Context;
-}
-
-function fakeStorage(overrides: Partial<ReturnType<typeof createEmptyPersistedState>>): Storage {
-  const state = { ...createEmptyPersistedState(), ...overrides };
-  return {
-    load: vi.fn(async () => state),
-    update: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
-  };
 }

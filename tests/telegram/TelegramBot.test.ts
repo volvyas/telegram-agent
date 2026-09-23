@@ -63,7 +63,7 @@ describe("TelegramBot", () => {
 
     await bot.handleUpdate(commandUpdate(42, "/start"));
 
-    expect(logger.error).toHaveBeenCalledWith("Telegram update handling failed.");
+    expect(logger.error).toHaveBeenCalledWith(expect.stringMatching(/^Telegram update handling failed Reference: ERR-/u), expect.objectContaining({ diagnosticId: expect.stringMatching(/^ERR-/u) }));
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(token);
   });
 

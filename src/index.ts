@@ -1,4 +1,5 @@
 import { Application } from "./app/Application.js";
+import { StructuredLogger } from "./logging/StructuredLogger.js";
 
 export const APPLICATION_NAME = "codex-remote";
 
@@ -9,7 +10,7 @@ export async function main(): Promise<void> {
 
 if (import.meta.main) {
   void main().catch(() => {
-    console.error("Application failed.");
+    new StructuredLogger({ level: "error" }).error("Application failed.");
     process.exitCode = 1;
   });
 }

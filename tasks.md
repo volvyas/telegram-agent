@@ -593,7 +593,7 @@ active project і дозволену operation та делегують існу�
 
 ## Phase 4 — confirmations, commit та історія задач
 
-### [ ] DEV-035 — Реалізувати task ID та persistent history
+### [x] DEV-035 — Реалізувати task ID та persistent history
 
 **Класи:** `TaskIdGenerator`, `TaskManager`, `TaskRecord`.
 
@@ -604,7 +604,12 @@ status, duration, exit code, test і Git summaries. Повний prompt збер
 **Готово, коли:** IDs не повторюються після restart/concurrent starts, а `/log`
 читає bounded останню історію зі storage.
 
-### [ ] DEV-036 — Реалізувати `ConfirmationService`
+**Виконано 2026-09-23:** atomic persistent `TASK-nnnn` sequence, bounded
+privacy-safe prompt/history records із lifecycle, duration, exit/test/Git
+summaries; `AgentManager` записує terminal/failure states, а `/log` читає
+останні project records через `TaskManager`.
+
+### [X] DEV-036 — Реалізувати `ConfirmationService`
 
 **Класи:** `Confirmation`, `ConfirmationService`.
 
@@ -615,7 +620,12 @@ valid pending ID.
 **Готово, коли:** tests покривають wrong user/project, expired, replay, deny та
 simultaneous callbacks.
 
-### [ ] DEV-037 — Додати Telegram confirmation flow
+**Виконано 2026-09-23:** додано persistent opaque confirmations із TTL та
+serialized atomic allow/deny consume; ownership mismatch не споживає pending
+confirmation, а expired/replayed IDs відхиляються. Додано persistence і
+concurrency tests.
+
+### [X] DEV-037 — Додати Telegram confirmation flow
 
 **Класи:** `ConfirmationHandler`, `ConfirmationKeyboard`, `CallbackRouter`.
 
@@ -625,7 +635,11 @@ simultaneous callbacks.
 **Готово, коли:** end-to-end tests доводять, що forged/replayed callback не
 запускає operation.
 
-### [ ] DEV-038 — Реалізувати `/commit` preview і cancel
+**Виконано 2026-09-23:** додано bounded Allow once/Deny callbacks із
+authentication-first routing, active-project validation та atomic confirmation
+consume; forged, expired і replayed callbacks не запускають operation.
+
+### [X] DEV-038 — Реалізувати `/commit` preview і cancel
 
 **Класи:** `CommitHandler`, `GitService` extension.
 
@@ -635,7 +649,11 @@ confirmation. Не commit-ити clean tree. На цьому кроці не в�
 **Готово, коли:** preview точний, clean/busy/no-project cases оброблені, кнопка
 Cancel закриває confirmation без side effects.
 
-### [ ] DEV-039 — Реалізувати підтверджений commit
+**Виконано 2026-09-23:** додано `/commit` preview із branch/files/numstat,
+перевірками project policy, clean tree та active operation; dirty tree створює
+pending confirmation без виконання Git commit, а Deny/Cancel не має side effects.
+
+### [X] DEV-039 — Реалізувати підтверджений commit
 
 **Класи:** `CommitService` або контрольоване розширення `GitService`.
 
@@ -646,7 +664,12 @@ untracked/усі files мовчки. Не робити push.
 **Готово, коли:** temporary-repo tests перевіряють commit, message зі
 спецсимволами, staging policy, hook failure і callback replay.
 
-### [ ] DEV-040 — Ввести policy для дозволених operations
+**Виконано 2026-09-23:** Allow once виконує безпечний `git commit --message`
+лише для вже staged changes; gateway не stage-ить files і не робить push.
+Додано temporary-repository tests для literal message, staging policy та hook
+failure; Deny/replay callbacks не виконують commit.
+
+### [X] DEV-040 — Ввести policy для дозволених operations
 
 **Класи:** `OperationPolicy`, інтеграція з project config та confirmation flow.
 
@@ -656,7 +679,12 @@ operations. Заборонити push/reset-hard/clean/checkout-discard за з�
 **Готово, коли:** table-driven tests покривають default і per-project policy;
 handler/agent path не може обійти policy service.
 
-### [ ] DEV-041 — Перевірити restart recovery
+**Виконано 2026-09-23:** додано централізований `OperationPolicy` для
+allowed/confirmation-required/forbidden decisions; handler, agent, configured
+command і dashboard paths використовують policy, а push/reset-hard/clean/
+checkout-discard заборонені default policy.
+
+### [X] DEV-041 — Перевірити restart recovery
 
 Визначити поведінку persisted `RUNNING` після падіння: reconcile як interrupted/
 failed, не вважати process живим без доказу. Зберегти resumable session, pending
@@ -665,11 +693,20 @@ history; прострочити небезпечні confirmations.
 **Готово, коли:** crash/restart integration test не дублює task, не запускає
 operation повторно й дозволяє безпечне resume.
 
+**Виконано 2026-09-23:** startup recovery атомарно reconciles persisted
+RUNNING/pending tasks і sessions у FAILED, зберігає WAITING_FOR_USER для
+безпечного resume та видаляє expired confirmations; recovery idempotent і не
+перезапускає зовнішні processes.
+
 ---
 
 ## Phase 5 — production hardening і документація
 
-### [ ] DEV-042 — Додати structured logging і redaction
+### [X] DEV-042 — Додати structured logging і redaction
+
+**Виконано 2026-09-23:** додано JSON-lines logger із level filtering,
+redaction configured secrets, token-like fields та auth/path fields; application
+і Telegram error paths використовують structured logger без raw exception output.
 
 **Класи:** `LoggerFactory`, `SecretRedactor`.
 
@@ -680,7 +717,7 @@ authorization headers і configured secret values; не логувати пов�
 **Готово, коли:** capture tests не знаходять test secrets у logs; rotation/size
 policy визначена; помилки зберігають корисний context.
 
-### [ ] DEV-043 — Посилити error handling
+### [X] DEV-043 — Посилити error handling
 
 Ввести typed/domain errors, єдине Telegram-safe formatting і diagnostic IDs.
 Обробити Telegram API failure/retry, malformed Codex event, missing repository,
@@ -689,7 +726,12 @@ storage failure та process spawn failure. Не використовувати 
 **Готово, коли:** fault-injection tests не залишають lock/process/pending state і
 користувач отримує дієве, але безпечне повідомлення.
 
-### [ ] DEV-044 — Завершити `MessageSender` для довгих повідомлень
+**Виконано 2026-09-23:** додано diagnostic IDs і Telegram-safe error formatter,
+selective retry для rate-limit/transient Telegram API failures та typed retry
+boundary; existing storage/process/repository/Codex paths retain typed errors
+without exposing raw causes.
+
+### [X] DEV-044 — Завершити `MessageSender` для довгих повідомлень
 
 **Клас:** `MessageSender.sendLongMessage`.
 
@@ -699,6 +741,10 @@ rate limit і гарантований cleanup temp files.
 
 **Готово, коли:** boundary/property tests покривають Unicode, Markdown escaping,
 code fences, exact limit, documents і Telegram retry response.
+
+**Виконано 2026-09-23:** додано `sendLongMessage` із Unicode-safe bounded
+chunking, code-fence-aware splitting, Telegram retry integration та existing
+temporary-document cleanup for large diffs/logs.
 
 ### [ ] DEV-045 — Security review і regression tests
 

@@ -12,6 +12,9 @@ import type { HelpHandler } from "./handlers/HelpHandler.js";
 import type { LogHandler } from "./handlers/LogHandler.js";
 import type { ContinueHandler } from "./handlers/ContinueHandler.js";
 import type { DashboardKeyboard } from "./keyboards/DashboardKeyboard.js";
+import type { ConfirmationHandler } from "./handlers/ConfirmationHandler.js";
+import type { CommitHandler } from "./handlers/CommitHandler.js";
+import { DEFAULT_OPERATION_POLICY } from "../policy/OperationPolicy.js";
 
 export class CommandRouter {
   readonly #projectHandler: ProjectHandler;
@@ -26,6 +29,8 @@ export class CommandRouter {
   readonly #logHandler: LogHandler | undefined;
   readonly #continueHandler: ContinueHandler | undefined;
   readonly #dashboard: DashboardKeyboard | undefined;
+  readonly #confirmationHandler: ConfirmationHandler | undefined;
+  readonly #commitHandler: CommitHandler | undefined;
 
   public constructor(
     projectHandler: ProjectHandler,
@@ -40,6 +45,8 @@ export class CommandRouter {
     logHandler?: LogHandler,
     continueHandler?: ContinueHandler,
     dashboard?: DashboardKeyboard,
+    confirmationHandler?: ConfirmationHandler,
+    commitHandler?: CommitHandler,
   ) {
     this.#projectHandler = projectHandler;
     this.#taskHandler = taskHandler;
@@ -53,6 +60,8 @@ export class CommandRouter {
     this.#logHandler = logHandler;
     this.#continueHandler = continueHandler;
     this.#dashboard = dashboard;
+    this.#confirmationHandler = confirmationHandler;
+    this.#commitHandler = commitHandler;
   }
 
   public register(bot: Bot): void {
@@ -68,6 +77,12 @@ export class CommandRouter {
     if (this.#answerHandler !== undefined) {
       const answerHandler = this.#answerHandler;
       bot.command("answer", (context) => answerHandler.handleAnswerCommand(context));
+    }
+    if (this.#confirmationHandler !== undefined) {
+      const confirmationHandler = this.#confirmationHandler;
+      bot.callbackQuery(/^confirm:(?:allow|deny):[A-Za-z0-9_-]{16,40}$/u, (context) =>
+        confirmationHandler.handleCallback(context),
+      );
     }
     if (this.#gitHandler !== undefined) {
       const gitHandler = this.#gitHandler;
@@ -88,6 +103,10 @@ export class CommandRouter {
     if (this.#stopHandler !== undefined) {
       const stopHandler = this.#stopHandler;
       bot.command("stop", (context) => stopHandler.handleStopCommand(context));
+    }
+    if (this.#commitHandler !== undefined) {
+      const commitHandler = this.#commitHandler;
+      bot.command("commit", (context) => commitHandler.handleCommitCommand(context));
     }
     if (this.#helpHandler !== undefined) bot.command("help", (context) => this.#helpHandler?.handleHelpCommand(context));
     if (this.#logHandler !== undefined) bot.command("log", (context) => this.#logHandler?.handleLogCommand(context));
@@ -110,7 +129,8 @@ export class CommandRouter {
         const callback = this.#dashboard?.resolve(context.callbackQuery?.data);
         const userId = context.from?.id;
         const project = userId === undefined ? undefined : await this.#projectHandler.restoreActiveProject(userId);
-        if (callback === undefined || project?.id !== callback.projectId || !project.allowedOperations.has(callback.action)) {
+        if (callback === undefined || project?.id !== callback.projectId ||
+          project === undefined || DEFAULT_OPERATION_POLICY.evaluate(project, callback.action).kind === "forbidden") {
           await context.answerCallbackQuery({ text: "This dashboard action is no longer available.", show_alert: true });
           return;
         }

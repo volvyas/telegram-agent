@@ -119,6 +119,11 @@ export class JsonStorage implements Storage {
       );
     }
     try {
+      // DEV-035 state files predate confirmations. Keep schema v1 readable and
+      // normalize the new collection before validating the document.
+      if (isRecord(document) && document.confirmations === undefined) {
+        document = { ...document, confirmations: [] };
+      }
       assertPersistedState(document);
     } catch (error) {
       throw new JsonStorageError("STORAGE_DAMAGED", "Storage state has an invalid shape", {
@@ -193,7 +198,13 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
     assert(typeof task.promptSummary === "string", "invalid prompt summary");
     assert(TASK_STATUSES.has(task.status as string), "invalid task status");
     assertTimestamp(task.createdAt);
+    if (task.startedAt !== undefined) assertTimestamp(task.startedAt);
+    if (task.finishedAt !== undefined) assertTimestamp(task.finishedAt);
     assertTimestamp(task.updatedAt);
+    if (task.durationMs !== undefined) assertNonNegativeInteger(task.durationMs, "invalid task duration");
+    if (task.exitCode !== undefined && task.exitCode !== null) assertInteger(task.exitCode, "invalid task exit code");
+    if (task.testSummary !== undefined) assertTestSummary(task.testSummary);
+    if (task.gitSummary !== undefined) assertGitSummary(task.gitSummary);
   }
   assert(isRecord(value.sequence), "sequence must be an object");
   assert(
@@ -201,6 +212,42 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
       (value.sequence.nextTaskNumber as number) >= 1,
     "invalid task sequence",
   );
+  assert(Array.isArray(value.confirmations), "confirmations must be an array");
+  for (const confirmation of value.confirmations) {
+    assert(isRecord(confirmation), "invalid confirmation");
+    assertNonEmptyString(confirmation.id);
+    assert(typeof confirmation.userId === "number" && Number.isSafeInteger(confirmation.userId) && confirmation.userId >= 0, "invalid confirmation user");
+    assertNonEmptyString(confirmation.projectId);
+    assertNonEmptyString(confirmation.operation);
+    assertTimestamp(confirmation.createdAt);
+    assertTimestamp(confirmation.expiresAt);
+    assert(new Date(confirmation.expiresAt).valueOf() > new Date(confirmation.createdAt).valueOf(), "invalid confirmation expiry");
+  }
+}
+
+function assertTestSummary(value: unknown): void {
+  assert(isRecord(value), "invalid test summary");
+  assert(new Set(["not_run", "passed", "failed", "stopped"]).has(value.status as string), "invalid test status");
+  if (value.durationMs !== undefined) assertNonNegativeInteger(value.durationMs, "invalid test duration");
+  if (value.exitCode !== undefined && value.exitCode !== null) assertInteger(value.exitCode, "invalid test exit code");
+}
+
+function assertGitSummary(value: unknown): void {
+  assert(isRecord(value), "invalid Git summary");
+  assert(value.branchBefore === null || typeof value.branchBefore === "string", "invalid initial branch");
+  assert(value.branchAfter === null || typeof value.branchAfter === "string", "invalid final branch");
+  assert(typeof value.cleanBefore === "boolean" && typeof value.cleanAfter === "boolean", "invalid Git cleanliness");
+  for (const field of ["changedFiles", "additions", "deletions", "observedDuringTaskFiles"] as const) {
+    assertNonNegativeInteger(value[field], `invalid Git ${field}`);
+  }
+}
+
+function assertNonNegativeInteger(value: unknown, message: string): void {
+  assert(typeof value === "number" && Number.isSafeInteger(value) && value >= 0, message);
+}
+
+function assertInteger(value: unknown, message: string): void {
+  assert(typeof value === "number" && Number.isSafeInteger(value), message);
 }
 
 function assertTimestamp(value: unknown): asserts value is string {

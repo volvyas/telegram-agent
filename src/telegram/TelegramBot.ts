@@ -8,9 +8,10 @@ import type { Update } from "grammy/types";
 
 import type { AuthGuard } from "./AuthGuard.js";
 import type { CommandRouter } from "./CommandRouter.js";
+import { createDiagnosticId, formatTelegramError } from "../errors/TelegramError.js";
 
 export interface TelegramBotLogger {
-  error(message: string): void;
+  error(message: string, fields?: Readonly<Record<string, unknown>>): void;
 }
 
 export interface TelegramBotOptions {
@@ -33,8 +34,9 @@ export class TelegramBot {
     this.#bot.use(options.authGuard.middleware());
     options.commandRouter.register(this.#bot);
 
-    this.#bot.catch(() => {
-      options.logger?.error("Telegram update handling failed.");
+    this.#bot.catch((error) => {
+      const diagnosticId = createDiagnosticId();
+      options.logger?.error(formatTelegramError(error, "Telegram update handling failed"), { diagnosticId });
     });
   }
 
@@ -49,8 +51,9 @@ export class TelegramBot {
   public async handleUpdate(update: Update): Promise<void> {
     try {
       await this.#bot.handleUpdate(update);
-    } catch {
-      this.#logger?.error("Telegram update handling failed.");
+    } catch (error) {
+      const diagnosticId = createDiagnosticId();
+      this.#logger?.error(formatTelegramError(error, "Telegram update handling failed"), { diagnosticId });
     }
   }
 }

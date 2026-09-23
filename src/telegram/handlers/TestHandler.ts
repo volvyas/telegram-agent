@@ -11,6 +11,7 @@ import type { ProcessResult } from "../../process/ProcessRunner.js";
 import type { ProjectConfig } from "../../config/ProjectConfig.js";
 import { MessageSender, type MessageTransport } from "../MessageSender.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../../policy/OperationPolicy.js";
 
 /** Runs only the selected project's configured test command. */
 export class TestHandler {
@@ -18,17 +19,20 @@ export class TestHandler {
   readonly #commands: TestCommandRunner;
   readonly #operations: ProjectOperationCoordinator;
   readonly #messages: MessageSender;
+  readonly #policy: OperationPolicy;
 
   public constructor(
     projects: ProjectHandler,
     commands: TestCommandRunner,
     operations: ProjectOperationCoordinator,
     messages = new MessageSender(),
+    policy = DEFAULT_OPERATION_POLICY,
   ) {
     this.#projects = projects;
     this.#commands = commands;
     this.#operations = operations;
     this.#messages = messages;
+    this.#policy = policy;
   }
 
   public async handleTestCommand(context: Context): Promise<void> {
@@ -40,7 +44,7 @@ export class TestHandler {
       await context.reply("Select a project first with /projects.");
       return;
     }
-    if (!project.allowedOperations.has("test") || project.testCommand === undefined) {
+    if (this.#policy.evaluate(project, "test").kind === "forbidden" || project.testCommand === undefined) {
       await context.reply("No test command is configured for this project.");
       return;
     }

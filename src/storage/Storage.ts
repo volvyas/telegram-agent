@@ -1,4 +1,5 @@
 import type { AgentState } from "../agent/AgentState.js";
+import type { TaskGitSummary, TaskStatus, TaskTestSummary } from "../domain/TaskRecord.js";
 
 export const STORAGE_SCHEMA_VERSION = 1 as const;
 
@@ -28,13 +29,17 @@ export interface PersistedPendingQuestion {
   readonly createdAt: PersistedTimestamp;
 }
 
-export type PersistedTaskStatus =
-  | "pending"
-  | "running"
-  | "waiting_for_user"
-  | "completed"
-  | "failed"
-  | "stopped";
+/** A short-lived, single-use authorization for a potentially dangerous operation. */
+export interface Confirmation {
+  readonly id: string;
+  readonly userId: number;
+  readonly projectId: string;
+  readonly operation: string;
+  readonly createdAt: PersistedTimestamp;
+  readonly expiresAt: PersistedTimestamp;
+}
+
+export type PersistedTaskStatus = TaskStatus;
 
 export interface PersistedTaskRecord {
   readonly id: string;
@@ -42,8 +47,18 @@ export interface PersistedTaskRecord {
   readonly promptSummary: string;
   readonly status: PersistedTaskStatus;
   readonly createdAt: PersistedTimestamp;
+  readonly startedAt?: PersistedTimestamp;
+  readonly finishedAt?: PersistedTimestamp;
   readonly updatedAt: PersistedTimestamp;
+  readonly durationMs?: number;
+  readonly exitCode?: number | null;
+  readonly testSummary?: PersistedTestSummary;
+  readonly gitSummary?: PersistedGitSummary;
 }
+
+export type PersistedTestSummary = TaskTestSummary;
+
+export type PersistedGitSummary = TaskGitSummary;
 
 export interface PersistedSequenceRecord {
   /** The positive numeric suffix to reserve for the next task. */
@@ -57,6 +72,7 @@ export interface PersistedState {
   readonly sessions: Readonly<Record<string, PersistedSessionRecord>>;
   readonly tasks: readonly PersistedTaskRecord[];
   readonly sequence: PersistedSequenceRecord;
+  readonly confirmations: readonly Confirmation[];
 }
 
 export type StorageUpdate = (state: PersistedState) => PersistedState;
@@ -92,5 +108,6 @@ export function createEmptyPersistedState(): PersistedState {
     sessions: {},
     tasks: [],
     sequence: { nextTaskNumber: 1 },
+    confirmations: [],
   };
 }

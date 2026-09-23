@@ -77,6 +77,22 @@ export class SessionManager {
     return toAgentSession(record);
   }
 
+  /** Reconciles process-local RUNNING sessions after a gateway restart. */
+  public async reconcileInterrupted(): Promise<void> {
+    const reconciledAt = this.#clock().toISOString();
+    await this.#storage.update((state) => {
+      let changed = false;
+      const sessions = Object.fromEntries(Object.entries(state.sessions).map(([projectId, session]) => {
+        if (session.state !== "RUNNING") return [projectId, session];
+        const project = this.#projects.require(projectId);
+        this.#assertRecordBelongsToProject(session, project);
+        changed = true;
+        return [projectId, { ...session, state: "FAILED" as const, updatedAt: reconciledAt }];
+      }));
+      return changed ? { ...state, sessions } : state;
+    });
+  }
+
   public async saveSession(session: AgentSession): Promise<void> {
     const project = this.#projects.require(session.projectId);
     this.#assertSessionBelongsToProject(session, project);

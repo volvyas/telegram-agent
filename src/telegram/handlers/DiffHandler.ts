@@ -6,20 +6,24 @@ import {
   type MessageTransport,
 } from "../MessageSender.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../../policy/OperationPolicy.js";
 
 export class DiffHandler {
   readonly #projects: ProjectHandler;
   readonly #git: GitDiffReader;
   readonly #messages: MessageSender;
+  readonly #policy: OperationPolicy;
 
   public constructor(
     projects: ProjectHandler,
     git: GitDiffReader,
     messages = new MessageSender(),
+    policy = DEFAULT_OPERATION_POLICY,
   ) {
     this.#projects = projects;
     this.#git = git;
     this.#messages = messages;
+    this.#policy = policy;
   }
 
   public async handleDiffCommand(context: Context): Promise<void> {
@@ -31,7 +35,7 @@ export class DiffHandler {
       await context.reply("Select a project first with /projects.");
       return;
     }
-    if (!project.allowedOperations.has("diff")) {
+    if (this.#policy.evaluate(project, "diff").kind === "forbidden") {
       await context.reply("Diff is not allowed for this project.");
       return;
     }

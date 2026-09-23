@@ -122,6 +122,40 @@ describe("GitService", () => {
     });
   });
 
+  it("previews and commits only staged changes with a literal message", async () => {
+    const repository = await createRepository();
+    await appendFile(join(repository, "README.md"), "staged\n");
+    await git(repository, ["add", "--", "README.md"]);
+    await writeFile(join(repository, "unstaged.txt"), "must remain untracked\n");
+
+    const service = new GitService();
+    const staged = await service.getStagedStatus(repository);
+    expect(staged.clean).toBe(false);
+    expect(staged.changedFiles).toEqual(["README.md"]);
+    expect(staged.numstat).toMatchObject({ filesChanged: 1, additions: 1, deletions: 0 });
+
+    await service.commit(repository, "feat: quote $HOME; \"safe\"");
+    const after = await service.getStatus(repository);
+    expect(after.changedFiles).toEqual(["unstaged.txt"]);
+    await expect(service.getStagedStatus(repository)).resolves.toMatchObject({ clean: true });
+    const log = await gitOutput(repository, ["log", "-1", "--format=%s"]);
+    expect(log).toBe("feat: quote $HOME; \"safe\"");
+  });
+
+  it("surfaces hook failure without creating a commit", async () => {
+    const repository = await createRepository();
+    await appendFile(join(repository, "README.md"), "blocked\n");
+    await git(repository, ["add", "--", "README.md"]);
+    await mkdir(join(repository, ".git", "hooks"), { recursive: true });
+    const hook = join(repository, ".git", "hooks", "pre-commit");
+    await writeFile(hook, "#!/bin/sh\necho blocked >&2\nexit 9\n", { mode: 0o755 });
+
+    await expect(new GitService().commit(repository, "blocked commit")).rejects.toMatchObject({
+      code: "GIT_COMMAND_FAILED",
+    });
+    await expect(new GitService().getStagedStatus(repository)).resolves.toMatchObject({ clean: false });
+  });
+
   it("returns one fixed-argument diff containing staged, unstaged and Unicode changes", async () => {
     const repository = await createRepository();
     await appendFile(join(repository, "README.md"), "Привіт ```diff\n");
@@ -169,6 +203,14 @@ async function git(repository: string, args: readonly string[]): Promise<void> {
     env: gitEnvironment,
   });
   expect(result.exitCode, result.stderr).toBe(0);
+}
+
+async function gitOutput(repository: string, args: readonly string[]): Promise<string> {
+  const result = await runner.run({
+    executable: "git", args, cwd: repository, env: gitEnvironment,
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  return result.stdout.trim();
 }
 
 async function createTemporaryDirectory(): Promise<string> {

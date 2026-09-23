@@ -18,7 +18,7 @@ export type {
 export type { AgentRun } from "./AgentRun.js";
 export type { AgentSession } from "../domain/AgentSession.js";
 export type { GitSnapshot, GitTaskComparison, GitTaskSnapshot } from "../domain/GitSnapshot.js";
-export type { TaskRecord } from "../domain/TaskRecord.js";
+export type { TaskGitSummary, TaskRecord, TaskStatus, TaskTestSummary } from "../domain/TaskRecord.js";
 export {
   AgentManager,
   AgentManagerError,

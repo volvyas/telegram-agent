@@ -12,6 +12,9 @@ import type { AgentEvent, AgentQuestionEvent, AgentTerminalEvent } from "./Agent
 import { AgentStateMachine } from "./AgentStateMachine.js";
 import type { AgentState } from "./AgentState.js";
 import type { CodingAgent } from "./CodingAgent.js";
+import type { PersistedTaskRecord, PersistedTaskStatus } from "../storage/Storage.js";
+import { summarizeGit, summarizePrompt, type FinishTaskInput } from "../tasks/TaskManager.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../policy/OperationPolicy.js";
 
 export interface AgentProjectRegistry {
   require(projectId: string): ProjectConfig;
@@ -29,6 +32,14 @@ export interface AgentManagerOptions {
   readonly clock?: () => Date;
   readonly sessionStore?: AgentSessionStore;
   readonly gitService?: GitStatusReader;
+  readonly taskStore?: AgentTaskStore;
+}
+
+export interface AgentTaskStore {
+  start(projectId: string, prompt: string): Promise<PersistedTaskRecord>;
+  resumeWaiting(projectId: string): Promise<PersistedTaskRecord | undefined>;
+  finish(taskId: string, input: FinishTaskInput): Promise<PersistedTaskRecord>;
+  fail(taskId: string, exitCode?: number | null): Promise<PersistedTaskRecord>;
 }
 
 export interface GitStatusReader {
@@ -99,8 +110,11 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   readonly #onEvent: AgentEventListener | undefined;
   readonly #sessionStore: AgentSessionStore | undefined;
   readonly #gitService: GitStatusReader;
+  readonly #taskStore: AgentTaskStore | undefined;
+  readonly #policy: OperationPolicy;
   readonly #sessions = new Map<string, ManagedSession>();
   readonly #activeOperations = new Map<string, ActiveOperation>();
+  #nextTransientTaskNumber = 1;
 
   public constructor(
     agent: CodingAgent,
@@ -113,12 +127,14 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
     this.#onEvent = options.onEvent;
     this.#sessionStore = options.sessionStore;
     this.#gitService = options.gitService ?? new GitService();
+    this.#taskStore = options.taskStore;
+    this.#policy = DEFAULT_OPERATION_POLICY;
   }
 
   /** Starts and consumes one complete agent turn. */
   public async startTask(projectId: string, prompt: string, userId?: number): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
-    if (!project.allowedOperations.has("task")) {
+    if (this.#policy.evaluate(project, "task").kind === "forbidden") {
       throw new AgentManagerError(
         "TASK_NOT_ALLOWED",
         "Tasks are not allowed for this project",
@@ -136,8 +152,10 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
     this.#activeOperations.set(projectId, operation);
     let session: ManagedSession | undefined;
     const startedAt = this.#clock().toISOString();
+    let history: PersistedTaskRecord | undefined;
 
     try {
+      history = await this.#taskStore?.start(projectId, prompt);
       const before = await this.#captureGitSnapshot(project.path);
       const prepared = await this.#beginSession(project);
       session = prepared.session;
@@ -168,13 +186,16 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       if (operation.stopRequested) await this.#agent.stop(run.runId);
       const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
       const after = await this.#captureGitSnapshot(project.path);
+      const git = createGitTaskSnapshot(before, after);
+      history = await this.#finishHistory(history, session.machine.state, git);
       return this.#createTaskRecord(
+        history,
+        prompt,
         projectId,
         run.runId,
         startedAt,
         terminalEvent,
-        before,
-        after,
+        git,
         session.machine.state,
       );
     } catch (error) {
@@ -184,6 +205,13 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         this.#updateSnapshot(session, { state: session.machine.state });
         try {
           await this.#persistSession(session);
+        } catch (persistenceError) {
+          operationError = persistenceError;
+        }
+      }
+      if (history !== undefined && history.status === "running") {
+        try {
+          history = await this.#taskStore?.fail(history.id) ?? history;
         } catch (persistenceError) {
           operationError = persistenceError;
         }
@@ -289,6 +317,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
     this.#activeOperations.set(projectId, operation);
     let session: ManagedSession | undefined;
     const startedAt = this.#clock().toISOString();
+    let history: PersistedTaskRecord | undefined;
     try {
       session = await this.#getWaitingSession(project);
       const pending = session.snapshot.pendingQuestion;
@@ -300,6 +329,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       }
       const threadId = session.snapshot.threadId;
       if (threadId === undefined) throw new AgentManagerError("QUESTION_THREAD_MISSING", "The question has no resumable thread", projectId);
+      history = await this.#taskStore?.resumeWaiting(projectId);
       const before = await this.#captureGitSnapshot(project.path);
       session.machine.transition("user_answered");
       this.#updateSnapshot(session, { state: session.machine.state, activeRunId: undefined, lastEvent: undefined, pendingQuestion: undefined });
@@ -310,13 +340,16 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       this.#updateSnapshot(session, { activeRunId: run.runId });
       const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
       const after = await this.#captureGitSnapshot(project.path);
+      const git = createGitTaskSnapshot(before, after);
+      history = await this.#finishHistory(history, session.machine.state, git);
       return this.#createTaskRecord(
+        history,
+        "User answer",
         projectId,
         run.runId,
         startedAt,
         terminalEvent,
-        before,
-        after,
+        git,
         session.machine.state,
       );
     } catch (error) {
@@ -325,6 +358,9 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         session.machine.transition("turn_failed");
         this.#updateSnapshot(session, { state: session.machine.state });
         try { await this.#persistSession(session); } catch (persistenceError) { operationError = persistenceError; }
+      }
+      if (history !== undefined && history.status === "running") {
+        try { history = await this.#taskStore?.fail(history.id) ?? history; } catch (persistenceError) { operationError = persistenceError; }
       }
       if (operationError instanceof AgentManagerError) throw operationError;
       throw new AgentManagerError("OPERATION_FAILED", "Unable to send the user answer", projectId, { cause: operationError });
@@ -495,22 +531,53 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   }
 
   #createTaskRecord(
+    history: PersistedTaskRecord | undefined,
+    prompt: string,
     projectId: string,
     runId: string,
     startedAt: string,
     terminalEvent: AgentTerminalEvent | AgentQuestionEvent,
-    before: GitSnapshot,
-    after: GitSnapshot,
+    git: ReturnType<typeof createGitTaskSnapshot>,
     state: AgentState,
   ): TaskRecord {
+    const finishedAt = history?.finishedAt ?? this.#clock().toISOString();
+    const effectiveStartedAt = history?.startedAt ?? startedAt;
+    const status = taskStatus(state);
+    const gitSummary = summarizeGit(git);
     return Object.freeze({
+      id: history?.id ?? this.#transientTaskId(),
       projectId,
+      promptSummary: history?.promptSummary ?? summarizePrompt(prompt),
       runId,
       state,
-      startedAt,
-      finishedAt: this.#clock().toISOString(),
+      status,
+      startedAt: effectiveStartedAt,
+      finishedAt,
+      durationMs: history?.durationMs ?? Math.max(0, new Date(finishedAt).valueOf() - new Date(effectiveStartedAt).valueOf()),
+      exitCode: history?.exitCode ?? null,
+      testSummary: history?.testSummary ?? { status: "not_run" as const },
+      gitSummary: history?.gitSummary ?? gitSummary,
       terminalEvent,
-      git: createGitTaskSnapshot(before, after),
+      git,
+    });
+  }
+
+  #transientTaskId(): string {
+    const id = `TASK-${String(this.#nextTransientTaskNumber).padStart(4, "0")}`;
+    this.#nextTransientTaskNumber += 1;
+    return id;
+  }
+
+  async #finishHistory(
+    history: PersistedTaskRecord | undefined,
+    state: AgentState,
+    git: ReturnType<typeof createGitTaskSnapshot>,
+  ): Promise<PersistedTaskRecord | undefined> {
+    if (history === undefined || this.#taskStore === undefined) return history;
+    return this.#taskStore.finish(history.id, {
+      status: taskStatus(state),
+      exitCode: null,
+      git,
     });
   }
 
@@ -573,6 +640,17 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
 
   async #persistSession(session: ManagedSession): Promise<void> {
     await this.#sessionStore?.saveSession(session.snapshot);
+  }
+}
+
+function taskStatus(state: AgentState): Exclude<PersistedTaskStatus, "pending" | "running"> {
+  switch (state) {
+    case "WAITING_FOR_USER": return "waiting_for_user";
+    case "COMPLETED": return "completed";
+    case "STOPPED": return "stopped";
+    case "FAILED":
+    case "IDLE":
+    case "RUNNING": return "failed";
   }
 }
 

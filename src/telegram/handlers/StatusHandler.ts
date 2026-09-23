@@ -7,6 +7,7 @@ import type {
 import type { AgentSession } from "../../domain/AgentSession.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
 import { formatStatusDashboard } from "../DashboardFormatter.js";
+import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../../policy/OperationPolicy.js";
 
 export interface AgentStatusReader {
   getStatus(projectId: string): AgentStatus;
@@ -17,15 +18,18 @@ export class StatusHandler {
   readonly #projects: ProjectHandler;
   readonly #agent: AgentStatusReader;
   readonly #git: GitStatusReader;
+  readonly #policy: OperationPolicy;
 
   public constructor(
     projects: ProjectHandler,
     agent: AgentStatusReader,
     git: GitStatusReader,
+    policy = DEFAULT_OPERATION_POLICY,
   ) {
     this.#projects = projects;
     this.#agent = agent;
     this.#git = git;
+    this.#policy = policy;
   }
 
   public async handleStatusCommand(context: Context): Promise<void> {
@@ -37,7 +41,7 @@ export class StatusHandler {
       await context.reply("Select a project first with /projects.");
       return;
     }
-    if (!project.allowedOperations.has("status")) {
+    if (this.#policy.evaluate(project, "status").kind === "forbidden") {
       await context.reply("Status is not allowed for this project.");
       return;
     }

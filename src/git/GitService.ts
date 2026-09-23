@@ -35,6 +35,10 @@ export interface GitDiffReader {
   getDiff(repositoryPath: string): Promise<GitDiff>;
 }
 
+export interface GitCommitResult {
+  readonly output: string;
+}
+
 export class GitServiceError extends Error {
   public readonly code: "INVALID_REPOSITORY_PATH" | "GIT_COMMAND_FAILED" | "GIT_OUTPUT_TRUNCATED";
 
@@ -68,6 +72,25 @@ export class GitService {
   }
 
   public async getStatus(repositoryPath: string): Promise<GitStatus> {
+    return this.#getStatus(repositoryPath, false);
+  }
+
+  /** Returns only changes already in the index; it never stages anything. */
+  public async getStagedStatus(repositoryPath: string): Promise<GitStatus> {
+    return this.#getStatus(repositoryPath, true);
+  }
+
+  public async commit(repositoryPath: string, message: string): Promise<GitCommitResult> {
+    validateRepositoryPath(repositoryPath);
+    if (message.trim().length === 0 || message.includes("\0") || message.length > 500) {
+      throw new GitServiceError("GIT_COMMAND_FAILED", "Commit message is invalid");
+    }
+    const result = await this.#git(repositoryPath, ["commit", "--message", message]);
+    requireSuccess(result, "commit");
+    return Object.freeze({ output: result.stdout.trim() });
+  }
+
+  async #getStatus(repositoryPath: string, stagedOnly: boolean): Promise<GitStatus> {
     validateRepositoryPath(repositoryPath);
 
     const [statusResult, branchResult, headResult] = await Promise.all([
@@ -79,15 +102,17 @@ export class GitService {
     requireSuccess(statusResult, "status");
     const branch = readBranch(branchResult);
     const hasHead = readHeadState(headResult);
-    const numstatResult = await this.#git(
-      repositoryPath,
-      hasHead
+    const numstatResult = await this.#git(repositoryPath, stagedOnly
+      ? ["diff", "--cached", "--numstat", "-z", "--"]
+      : hasHead
         ? ["diff", "--numstat", "-z", "HEAD", "--"]
-        : ["diff", "--cached", "--numstat", "-z", "--"],
-    );
+        : ["diff", "--cached", "--numstat", "-z", "--"]);
     requireSuccess(numstatResult, "diff --numstat");
 
-    const porcelain = parsePorcelainStatus(statusResult.stdout);
+    const allPorcelain = parsePorcelainStatus(statusResult.stdout);
+    const porcelain = Object.freeze(stagedOnly
+      ? allPorcelain.filter((entry) => entry.index !== " " && entry.index !== "?")
+      : [...allPorcelain]);
     const changedFiles = Object.freeze([
       ...new Set(
         porcelain.flatMap((entry) =>

@@ -3,6 +3,7 @@ import type { Context } from "grammy";
 const DEFAULT_COMMANDS = [
   "start", "projects", "project", "task", "answer", "status", "git",
   "diff", "test", "stop", "help", "log", "continue",
+  "commit",
 ] as const;
 
 export class HelpHandler {

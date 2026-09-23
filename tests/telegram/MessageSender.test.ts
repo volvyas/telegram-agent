@@ -100,6 +100,27 @@ describe("MessageSender", () => {
 
     expect(uploadedContent).toBe(content);
   });
+
+  it("sends long Unicode text within Telegram limits and preserves content", async () => {
+    const content = "Ї🙂 line\n".repeat(1_200);
+    const messages: string[] = [];
+    const result = await new MessageSender().sendLongMessage(textTransport(messages), content);
+
+    expect(result.kind).toBe("messages");
+    expect(messages.length).toBeGreaterThan(1);
+    expect(messages.every((message) => message.length <= MESSAGE_SENDER_LIMITS.telegramMessageCharacters)).toBe(true);
+    expect(messages.join("")).toBe(content);
+  });
+
+  it("reopens fenced blocks when a long message crosses a chunk boundary", async () => {
+    const content = `\`\`\`typescript\n${"const value = 1;\n".repeat(500)}\`\`\``;
+    const messages: string[] = [];
+    await new MessageSender().sendLongMessage(textTransport(messages), content);
+
+    expect(messages.length).toBeGreaterThan(1);
+    expect(messages.every((message) => message.length <= MESSAGE_SENDER_LIMITS.telegramMessageCharacters)).toBe(true);
+    expect(messages.every((message) => (message.match(/```/gu)?.length ?? 0) % 2 === 0)).toBe(true);
+  });
 });
 
 function textTransport(messages: string[]): MessageTransport & {
