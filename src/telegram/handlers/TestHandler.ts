@@ -8,6 +8,7 @@ import {
   ProjectCommandRunnerError,
 } from "../../process/ProjectCommandRunner.js";
 import type { ProcessResult } from "../../process/ProcessRunner.js";
+import { formatTestOutput } from "../../process/TestOutputFormatter.js";
 import type { ProjectConfig } from "../../config/ProjectConfig.js";
 import { MessageSender, type MessageTransport } from "../MessageSender.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
@@ -56,9 +57,14 @@ export class TestHandler {
         "test",
         (signal) => this.#commands.run(project, "test", { signal }),
       );
-      await context.reply(testSummary(result));
-      const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
-      await this.#messages.sendTestOutput(telegramTransport(context), output);
+      const output = formatTestOutput(result, project.path);
+      await context.reply(output.message);
+      if (output.diagnostic !== undefined) {
+        await this.#messages.sendTestOutput(
+          telegramTransport(context),
+          output.diagnostic,
+        );
+      }
     } catch (error) {
       if (error instanceof AgentManagerError && error.code === "OPERATION_ACTIVE") {
         await context.reply("This project is busy with another operation.");
@@ -79,23 +85,6 @@ export interface TestCommandRunner {
     operation: "test",
     options?: { readonly signal?: AbortSignal },
   ): Promise<ProcessResult>;
-}
-
-function testSummary(result: {
-  readonly exitCode: number | null;
-  readonly durationMs: number;
-  readonly terminationReason?: "aborted" | "timed_out";
-}): string {
-  if (result.terminationReason === "timed_out") {
-    return `Tests timed out after ${String(result.durationMs)} ms.`;
-  }
-  if (result.terminationReason === "aborted") {
-    return "Tests stopped.";
-  }
-  if (result.exitCode === 0) {
-    return `Tests passed in ${String(result.durationMs)} ms.`;
-  }
-  return `Tests failed (exit code ${String(result.exitCode)}) in ${String(result.durationMs)} ms.`;
 }
 
 function telegramTransport(context: Context): MessageTransport {

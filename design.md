@@ -1183,3 +1183,36 @@ catch {}
 Головний принцип:
 
 **Телефон керує агентом, Telegram забезпечує двосторонній канал, Codex реально працює з repository, а IntelliJ залишається звичайним IDE, відкритим на тому самому repository.**
+
+---
+
+# 36. Phase 5B — Jira read-only integration
+
+Після завершення базового gateway додати optional Jira integration. На першому
+етапі вона працює лише на читання й дає дві можливості:
+
+1. прочитати bounded набір полів ticket за key;
+2. показати tickets, призначені поточному Jira account.
+
+Запланований Telegram UX:
+
+```text
+/jira PROJ-123
+/jira mine
+```
+
+Заборонено створювати/редагувати issues, виконувати transitions, змінювати
+assignee, додавати comments, attachments, links або worklogs. Telegram input не
+може задавати Jira hostname, endpoint, arbitrary JQL, account ID чи raw field
+projection. Search `assigned to me` формує adapter через current Jira user.
+
+Jira token є secret і завантажується з environment. Base URL, project allowlist,
+custom-field mapping та limits належать operator configuration. REST response
+нормалізується у domain types; Jira transport types не потрапляють у Telegram
+layer. Rich text перетворюється на bounded plain text. Повні issue payloads не
+persist-яться й не передаються Codex автоматично.
+
+До реалізації обов'язково перевірити реальний deployment (Cloud/Data Center),
+REST API version, auth, field metadata, pagination і rate limits. Детальний
+scope, trust boundaries, configuration та acceptance описані в
+[`docs/jira-integration.md`](docs/jira-integration.md).

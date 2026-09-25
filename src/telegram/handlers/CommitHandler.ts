@@ -84,7 +84,15 @@ export class CommitHandler {
       return;
     }
     try {
-      await this.#git.commit(confirmation.projectId, message);
+      const userId = context.from?.id;
+      const project = userId === undefined
+        ? undefined
+        : await this.#projects.restoreActiveProject(userId);
+      if (project === undefined || project.id !== confirmation.projectId) {
+        await context.reply("This confirmation is no longer valid.");
+        return;
+      }
+      await this.#git.commit(project.path, message);
       await context.reply("Commit created from staged changes.");
     } catch {
       await context.reply("Unable to create commit.");

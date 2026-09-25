@@ -30,8 +30,8 @@ describe("TestHandler", () => {
     await handler.handleTestCommand(context(reply));
 
     expect(reply).toHaveBeenCalledWith("Tests started…");
-    expect(reply).toHaveBeenCalledWith(expect.stringMatching(/^Tests passed in \d+ ms\.$/u));
-    expect(reply).toHaveBeenCalledWith("Test output (1/1):\nall good");
+    expect(reply).toHaveBeenCalledWith("Tests: passed");
+    expect(reply).toHaveBeenCalledTimes(2);
   });
 
   it("reports a failed configured test command", async () => {
@@ -40,11 +40,12 @@ describe("TestHandler", () => {
       testCommand: nodeCommand(),
     }, undefined, failedResult());
     await select(projects, reply);
+    const testContext = context(reply);
 
-    await handler.handleTestCommand(context(reply));
+    await handler.handleTestCommand(testContext);
 
-    expect(reply).toHaveBeenCalledWith(expect.stringMatching(/^Tests failed \(exit code 3\) in \d+ ms\.$/u));
-    expect(reply).toHaveBeenCalledWith("Test output (1/1):\nbroken");
+    expect(reply).toHaveBeenCalledWith("Tests: failed (exit code 3)");
+    expect(testContext.replyWithDocument).toHaveBeenCalledOnce();
   });
 
   it("reports a timed-out configured test command", async () => {
@@ -56,7 +57,7 @@ describe("TestHandler", () => {
 
     await handler.handleTestCommand(context(reply));
 
-    expect(reply).toHaveBeenCalledWith(expect.stringMatching(/^Tests timed out after \d+ ms\.$/u));
+    expect(reply).toHaveBeenCalledWith("Tests: timed out");
   });
 
   it("does not start tests when the project is busy", async () => {
@@ -148,11 +149,13 @@ async function select(projects: ProjectHandler, reply: ReturnType<typeof vi.fn>)
   reply.mockClear();
 }
 
-function context(reply: ReturnType<typeof vi.fn>): Context {
+function context(reply: ReturnType<typeof vi.fn>): Context & {
+  readonly replyWithDocument: ReturnType<typeof vi.fn>;
+} {
   return {
     from: { id: 42 },
     message: { text: "/test hostile command text" },
     reply,
     replyWithDocument: vi.fn(() => Promise.resolve()),
-  } as unknown as Context;
+  } as unknown as Context & { readonly replyWithDocument: ReturnType<typeof vi.fn> };
 }

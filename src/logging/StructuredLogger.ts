@@ -12,8 +12,8 @@ export interface StructuredLoggerOptions {
 }
 
 const LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
-const SENSITIVE_KEY = /(?:token|secret|password|authorization|api[_-]?key|codexhome)/iu;
-const PATH_KEY = /^(?:path|cwd|workingdirectory|repositorypath|projectpath)$/iu;
+const SENSITIVE_KEY = /(?:token|secret|password|authorization|credential|cookie|api[_-]?key|codexhome|threadid|sessionid)/iu;
+const PATH_KEY = /(?:path|cwd|directory)$/iu;
 const MAX_MESSAGE_LENGTH = 2_000;
 const MAX_FIELD_DEPTH = 4;
 

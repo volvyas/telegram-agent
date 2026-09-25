@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "activeProjects": {
+    "5257760869": {
+      "projectId": "telegram-agent",
+      "updatedAt": "2026-09-16T13:41:16.159Z"
+    }
+  },
+  "sessions": {
+    "telegram-agent": {
+      "projectId": "telegram-agent",
+      "projectPath": "/home/volodymyr/IdeaProjects/telegram-agent",
+      "state": "COMPLETED",
+      "threadId": "01a0a57a-39c1-7813-a271-64c4ae677e36",
+      "startedAt": "2026-09-24T10:42:17.604Z",
+      "updatedAt": "2026-09-24T10:43:17.668Z"
+    }
+  },
+  "tasks": [
+    {
+      "id": "TASK-0001",
+      "projectId": "telegram-agent",
+      "promptSummary": "Return only this JSON and make no file changes: {\"kind\":\"question\",\"question\":\"Choose acceptance option\",\"choices\":[\"Option A\",\"Option B\"]}",
+      "status": "failed",
+      "createdAt": "2026-09-24T10:35:52.254Z",
+      "startedAt": "2026-09-24T10:35:52.254Z",
+      "updatedAt": "2026-09-24T10:35:59.163Z",
+      "exitCode": null,
+      "testSummary": {
+        "status": "not_run"
+      },
+      "finishedAt": "2026-09-24T10:35:59.163Z",
+      "durationMs": 6909
+    },
+    {
+      "id": "TASK-0002",
+      "projectId": "telegram-agent",
+      "promptSummary": "Answer \"test passed\"",
+      "status": "failed",
+      "createdAt": "2026-09-24T10:36:45.723Z",
+      "startedAt": "2026-09-24T10:36:45.723Z",
+      "updatedAt": "2026-09-24T10:36:45.761Z",
+      "exitCode": null,
+      "testSummary": {
+        "status": "not_run"
+      },
+      "finishedAt": "2026-09-24T10:36:45.761Z",
+      "durationMs": 38
+    },
+    {
+      "id": "TASK-0003",
+      "projectId": "telegram-agent",
+      "promptSummary": "count from 1 to 1000",
+      "status": "completed",
+      "createdAt": "2026-09-24T10:42:17.574Z",
+      "startedAt": "2026-09-24T10:42:17.574Z",
+      "updatedAt": "2026-09-24T10:43:18.072Z",
+      "exitCode": null,
+      "testSummary": {
+        "status": "not_run"
+      },
+      "finishedAt": "2026-09-24T10:43:18.072Z",
+      "durationMs": 60498,
+      "gitSummary": {
+        "branchBefore": "develop",
+        "branchAfter": "develop",
+        "cleanBefore": false,
+        "cleanAfter": false,
+        "changedFiles": 13,
+        "additions": 251,
+        "deletions": 12,
+        "observedDuringTaskFiles": 0
+      }
+    }
+  ],
+  "sequence": {
+    "nextTaskNumber": 4
+  },
+  "confirmations": []
+}

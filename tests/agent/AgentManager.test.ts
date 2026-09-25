@@ -102,12 +102,13 @@ describe("AgentManager", () => {
 
   it("stops an active task without discarding its resumable session", async () => {
     const gate = deferredEvents();
+    const delivered: AgentEvent[] = [];
     const agent = new FakeCodingAgent((options) => run(
       options.projectId,
       "RUN-motor",
       gate.events,
     ));
-    const manager = createManager(agent);
+    const manager = createManager(agent, (item) => delivered.push(item));
 
     const running = manager.startTask("motor", "Stop me");
     await vi.waitFor(() => {
@@ -118,13 +119,42 @@ describe("AgentManager", () => {
     expect(agent.stops).toEqual(["RUN-motor"]);
     expect(manager.getStatus("motor")).toMatchObject({ state: "STOPPED", active: true });
 
-    gate.push(event("stopped", "motor", "RUN-motor", { reason: "user" }));
+    gate.push(event("completed", "motor", "RUN-motor", { summary: "Late completion" }));
     gate.end();
-    await running;
+    await expect(running).resolves.toMatchObject({
+      state: "STOPPED",
+      terminalEvent: { type: "stopped", reason: "user" },
+    });
 
-    expect(manager.getSession("motor")).toMatchObject({ state: "STOPPED" });
+    expect(delivered.map((item) => item.type)).toEqual(["stopped"]);
+    expect(manager.getSession("motor")).toMatchObject({
+      state: "STOPPED",
+      lastEvent: { type: "stopped" },
+    });
     expect(manager.getSession("motor")).not.toHaveProperty("activeRunId");
     await expect(manager.stop("motor")).resolves.toBe(false);
+  });
+
+  it("honors stop requested before the coding agent returns a run ID", async () => {
+    let resolveRun: ((run: AgentRun) => void) | undefined;
+    const agent = new FakeCodingAgent((_options) => new Promise<AgentRun>((resolve) => {
+      resolveRun = resolve;
+    }));
+    const manager = createManager(agent);
+    const running = manager.startTask("motor", "Stop during startup");
+    await vi.waitFor(() => expect(agent.starts).toHaveLength(1));
+
+    await expect(manager.stop("motor")).resolves.toBe(true);
+    resolveRun?.(run("motor", "RUN-late", [
+      event("completed", "motor", "RUN-late", { summary: "Must be ignored" }),
+    ]));
+
+    await expect(running).resolves.toMatchObject({
+      state: "STOPPED",
+      terminalEvent: { type: "stopped" },
+    });
+    expect(agent.stops).toEqual(["RUN-late"]);
+    expect(manager.getStatus("motor")).toMatchObject({ active: false, state: "STOPPED" });
   });
 
   it("allows different projects to run concurrently", async () => {

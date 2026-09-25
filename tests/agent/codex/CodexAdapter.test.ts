@@ -168,6 +168,27 @@ describe("CodexAdapter", () => {
     ]);
   });
 
+  it("emits stopped promptly even when the SDK iterator ignores abort", async () => {
+    const started = deferred<boolean>();
+    const adapter = createAdapter(new FakeClient(new IgnoringAbortFakeThread(
+      () => started.resolve(true),
+    )));
+    const run = await adapter.start({
+      projectId: "motor",
+      workingDirectory: "/projects/motor",
+      prompt: "Long task",
+    });
+    const collecting = collect(run.events);
+    await started.promise;
+
+    await adapter.stop(run.runId);
+
+    await expect(collecting).resolves.toEqual([
+      expect.objectContaining({ type: "run_started" }),
+      expect.objectContaining({ type: "stopped", reason: "user" }),
+    ]);
+  });
+
   it("turns an unexpected stream failure into a safe fatal event", async () => {
     const secret = "sensitive-stream-details";
     const thread = new FailingStreamFakeThread(secret);
@@ -368,6 +389,28 @@ class BlockingFakeThread implements CodexThreadPort {
           yield { type: "turn.started" } as const;
           onStarted();
           await rejectWhenAborted(options.signal);
+        },
+      },
+    });
+  }
+}
+
+class IgnoringAbortFakeThread implements CodexThreadPort {
+  public readonly id: string | null = null;
+  readonly #onStarted: () => void;
+
+  public constructor(onStarted: () => void) {
+    this.#onStarted = onStarted;
+  }
+
+  public runStreamed(): Promise<{ readonly events: AsyncIterable<ThreadEvent> }> {
+    const onStarted = this.#onStarted;
+    return Promise.resolve({
+      events: {
+        async *[Symbol.asyncIterator]() {
+          yield { type: "turn.started" } as const;
+          onStarted();
+          await new Promise<never>(() => undefined);
         },
       },
     });

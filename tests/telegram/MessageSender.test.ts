@@ -40,13 +40,13 @@ describe("MessageSender", () => {
   it("sends a large diff as a temporary document and cleans it after success", async () => {
     const root = await temporaryDirectory();
     let documentPath: string | undefined;
-    let uploadedContent: string | undefined;
+    let uploadedBytes: Buffer | undefined;
     const transport: MessageTransport = {
       sendText: vi.fn(() => Promise.resolve()),
       sendDocument: vi.fn(async (path, options) => {
         documentPath = path;
-        uploadedContent = await readFile(path, "utf8");
-        expect(options).toEqual({ filename: "changes.diff", caption: "Git diff" });
+        uploadedBytes = await readFile(path);
+        expect(options).toEqual({ filename: "changes.diff", caption: "Git diff (UTF-8)" });
       }),
     };
     const content = "large diff\n".repeat(20);
@@ -56,7 +56,8 @@ describe("MessageSender", () => {
         .sendDiff(transport, content),
     ).resolves.toEqual({ kind: "document" });
 
-    expect(uploadedContent).toBe(content);
+    expect(uploadedBytes?.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect(uploadedBytes?.subarray(3)).toEqual(Buffer.from(content, "utf8"));
     expect(documentPath).toBeDefined();
     await expect(access(documentPath ?? "missing")).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -88,7 +89,10 @@ describe("MessageSender", () => {
       sendText: vi.fn(() => Promise.resolve()),
       sendDocument: vi.fn(async (path, options) => {
         uploadedContent = await readFile(path, "utf8");
-        expect(options).toEqual({ filename: "test-output.txt", caption: "Test output" });
+        expect(options).toEqual({
+          filename: "test-output.txt",
+          caption: "Test diagnostics (UTF-8)",
+        });
       }),
     };
     const content = "test output\n".repeat(20);
@@ -98,7 +102,30 @@ describe("MessageSender", () => {
         .sendTestOutput(transport, content),
     ).resolves.toEqual({ kind: "document" });
 
-    expect(uploadedContent).toBe(content);
+    expect(uploadedContent).toBe(`\uFEFF${content}`);
+  });
+
+  it("preserves Ukrainian diff text across inline chunks and UTF-8 documents", async () => {
+    const content = "diff --git a/вітаю.txt b/вітаю.txt\n+Привіт, світе 🙂\n".repeat(120);
+    const messages: string[] = [];
+    await new MessageSender({ inlineDiffBytes: 100_000 })
+      .sendDiff(textTransport(messages), content);
+    expect(messages.map(withoutHeader).join("")).toBe(content);
+    expect(messages.join("")).not.toContain("�");
+
+    const root = await temporaryDirectory();
+    let bytes: Buffer | undefined;
+    const transport: MessageTransport = {
+      sendText: vi.fn(() => Promise.resolve()),
+      sendDocument: vi.fn(async (path) => {
+        bytes = await readFile(path);
+      }),
+    };
+    await new MessageSender({ temporaryRoot: root, inlineDiffBytes: 1 })
+      .sendDiff(transport, content);
+    expect(bytes?.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect(bytes?.subarray(3).toString("utf8")).toBe(content);
+    expect(bytes?.subarray(3).toString("utf8")).not.toContain("�");
   });
 
   it("sends long Unicode text within Telegram limits and preserves content", async () => {

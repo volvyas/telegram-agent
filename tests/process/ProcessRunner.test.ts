@@ -144,6 +144,21 @@ describe("ProcessRunner", () => {
     expect(chunks.join("")).toBe("1234567890");
   });
 
+  it("never splits a UTF-8 code point at the captured-output boundary", async () => {
+    const cwd = await createTemporaryDirectory();
+    const result = await new ProcessRunner().run({
+      executable: process.execPath,
+      args: ["-e", "process.stdout.write('ї🙂tail')"],
+      cwd,
+      env: {},
+      maxOutputBytes: 5,
+    });
+
+    expect(result.stdout).toBe("ї");
+    expect(result.stdout).not.toContain("�");
+    expect(result.stdoutTruncated).toBe(true);
+  });
+
   it("rejects unsafe request shapes before spawning", () => {
     const runner = new ProcessRunner();
 

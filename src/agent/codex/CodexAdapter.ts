@@ -216,9 +216,23 @@ export class CodexAdapter implements CodingAgent {
   ): AsyncIterable<AgentEvent> {
     let terminalEventSeen = false;
     let reportedDiagnostics = 0;
+    const iterator = events[Symbol.asyncIterator]();
 
     try {
-      for await (const sdkEvent of events) {
+      while (true) {
+        const step = await nextOrAbort(iterator, activeRun.controller.signal);
+        if (step === undefined) {
+          terminalEventSeen = true;
+          yield this.#stoppedEvent(runId, activeRun, "user");
+          return;
+        }
+        if (step.done) break;
+        if (activeRun.controller.signal.aborted) {
+          terminalEventSeen = true;
+          yield this.#stoppedEvent(runId, activeRun, "user");
+          return;
+        }
+        const sdkEvent = step.value;
         for (const event of mapper.map(sdkEvent)) {
           if (event.type === "thread_started") {
             if (expectedThreadId !== undefined && event.threadId !== expectedThreadId) {
@@ -291,6 +305,30 @@ export class CodexAdapter implements CodingAgent {
       message: error.message,
     };
   }
+}
+
+async function nextOrAbort<T>(
+  iterator: AsyncIterator<T>,
+  signal: AbortSignal,
+): Promise<IteratorResult<T> | undefined> {
+  if (signal.aborted) return undefined;
+  return new Promise((resolve, reject) => {
+    const aborted = (): void => {
+      signal.removeEventListener("abort", aborted);
+      resolve(undefined);
+    };
+    signal.addEventListener("abort", aborted, { once: true });
+    void iterator.next().then(
+      (step) => {
+        signal.removeEventListener("abort", aborted);
+        resolve(step);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", aborted);
+        reject(error instanceof Error ? error : new Error("Codex event stream failed"));
+      },
+    );
+  });
 }
 
 class SdkCodexClient implements CodexClientPort {

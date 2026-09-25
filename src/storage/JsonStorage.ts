@@ -1,5 +1,5 @@
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -45,8 +45,14 @@ export class JsonStorage implements Storage {
   #acceptingOperations = true;
 
   public constructor(dataDirectory: string, fileName = "state.json") {
-    this.#dataDirectory = dataDirectory;
-    this.#stateFile = join(dataDirectory, fileName);
+    if (!isAbsolute(dataDirectory)) {
+      throw new TypeError("Storage directory must be absolute");
+    }
+    if (fileName.length === 0 || fileName.includes("\0") || basename(fileName) !== fileName) {
+      throw new TypeError("Storage file name must not leave the storage directory");
+    }
+    this.#dataDirectory = resolve(dataDirectory);
+    this.#stateFile = join(this.#dataDirectory, fileName);
   }
 
   public load(): Promise<PersistedState> {
@@ -90,6 +96,7 @@ export class JsonStorage implements Storage {
     if (this.#state !== undefined) {
       return this.#state;
     }
+    await this.#secureStoragePaths();
     let contents: string;
     try {
       contents = await readFile(this.#stateFile, "utf8");
@@ -140,7 +147,7 @@ export class JsonStorage implements Storage {
       `.${basename(this.#stateFile)}.${String(process.pid)}.${randomUUID()}.tmp`,
     );
     try {
-      await mkdir(this.#dataDirectory, { recursive: true, mode: 0o700 });
+      await this.#secureStoragePaths();
       const handle = await open(temporaryFile, "wx", 0o600);
       try {
         await handle.writeFile(`${JSON.stringify(state, undefined, 2)}\n`, "utf8");
@@ -149,12 +156,47 @@ export class JsonStorage implements Storage {
         await handle.close();
       }
       await rename(temporaryFile, this.#stateFile);
+      await chmod(this.#stateFile, 0o600);
       await syncDirectory(this.#dataDirectory);
     } catch (error) {
       await unlink(temporaryFile).catch(() => undefined);
       throw new JsonStorageError("STORAGE_WRITE_FAILED", "Unable to persist storage state", {
         cause: error,
       });
+    }
+  }
+
+  async #secureStoragePaths(): Promise<void> {
+    try {
+      await mkdir(this.#dataDirectory, { recursive: true, mode: 0o700 });
+      const directoryStat = await lstat(this.#dataDirectory);
+      if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+        throw new JsonStorageError(
+          "STORAGE_READ_FAILED",
+          "Storage directory must be a real directory",
+        );
+      }
+      await chmod(this.#dataDirectory, 0o700);
+
+      try {
+        const stateStat = await lstat(this.#stateFile);
+        if (!stateStat.isFile() || stateStat.isSymbolicLink()) {
+          throw new JsonStorageError(
+            "STORAGE_READ_FAILED",
+            "Storage state must be a regular file",
+          );
+        }
+        await chmod(this.#stateFile, 0o600);
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      }
+    } catch (error) {
+      if (error instanceof JsonStorageError) throw error;
+      throw new JsonStorageError(
+        "STORAGE_READ_FAILED",
+        "Unable to secure storage paths",
+        { cause: error },
+      );
     }
   }
 }

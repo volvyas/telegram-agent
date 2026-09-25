@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { withTelegramRetry, type TelegramRetryOptions } from "./TelegramRetry.js";
@@ -10,6 +10,7 @@ const LONG_MESSAGE_CHUNK_CHARACTERS = 3_900;
 const TEMPORARY_PREFIX = "telegram-agent-diff-";
 const DIFF_FILE_NAME = "changes.diff";
 const TEST_OUTPUT_FILE_NAME = "test-output.txt";
+const UTF8_BOM = "\uFEFF";
 
 export interface MessageTransport {
   sendText(text: string): Promise<void>;
@@ -72,10 +73,11 @@ export class MessageSender {
     const directory = await mkdtemp(join(this.#temporaryRoot, TEMPORARY_PREFIX));
     const path = join(directory, DIFF_FILE_NAME);
     try {
-      await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
+      await chmod(directory, 0o700);
+      await writeUtf8Document(path, content);
       await this.#sendDocument(transport, path, {
         filename: DIFF_FILE_NAME,
-        caption: "Git diff",
+        caption: "Git diff (UTF-8)",
       });
       return Object.freeze({ kind: "document" });
     } finally {
@@ -99,36 +101,16 @@ export class MessageSender {
     transport: MessageTransport,
     content: string,
   ): Promise<DiffDelivery> {
-    return this.#sendOutput(
-      transport,
-      content,
-      "Test output",
-      TEST_OUTPUT_FILE_NAME,
-    );
-  }
-
-  async #sendOutput(
-    transport: MessageTransport,
-    content: string,
-    label: string,
-    filename: string,
-  ): Promise<DiffDelivery> {
     if (content.length === 0) return Object.freeze({ kind: "empty" });
-    if (Buffer.byteLength(content, "utf8") <= this.#inlineDiffBytes) {
-      const chunks = splitText(content, DIFF_CHUNK_CHARACTERS);
-      for (const [index, chunk] of chunks.entries()) {
-        await this.#sendText(transport,
-          `${label} (${String(index + 1)}/${String(chunks.length)}):\n${chunk}`,
-        );
-      }
-      return Object.freeze({ kind: "messages", count: chunks.length });
-    }
-
     const directory = await mkdtemp(join(this.#temporaryRoot, TEMPORARY_PREFIX));
-    const path = join(directory, filename);
+    const path = join(directory, TEST_OUTPUT_FILE_NAME);
     try {
-      await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
-      await this.#sendDocument(transport, path, { filename, caption: label });
+      await chmod(directory, 0o700);
+      await writeUtf8Document(path, content);
+      await this.#sendDocument(transport, path, {
+        filename: TEST_OUTPUT_FILE_NAME,
+        caption: "Test diagnostics (UTF-8)",
+      });
       return Object.freeze({ kind: "document" });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -146,6 +128,11 @@ export class MessageSender {
   ): Promise<void> {
     await withTelegramRetry(() => transport.sendDocument(path, options), this.#telegramRetry);
   }
+}
+
+async function writeUtf8Document(path: string, content: string): Promise<void> {
+  const encoded = content.startsWith(UTF8_BOM) ? content : `${UTF8_BOM}${content}`;
+  await writeFile(path, encoded, { encoding: "utf8", mode: 0o600 });
 }
 
 function splitText(content: string, limit: number): readonly string[] {

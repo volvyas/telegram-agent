@@ -63,8 +63,7 @@ export class ProjectCommandRunner {
     this.#runner = runner;
     this.#policy = policy;
     this.#defaults = Object.freeze({ ...options });
-    this.#environment = Object.freeze(
-      options.environment === undefined
+    const environment = options.environment === undefined
         ? allowEnvironment(process.env, [
             "PATH",
             "LANG",
@@ -72,8 +71,13 @@ export class ProjectCommandRunner {
             "SYSTEMROOT",
             "WINDIR",
           ])
-        : { ...options.environment },
-    );
+        : options.environment;
+    this.#environment = Object.freeze({
+      ...environment,
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+      TERM: "dumb",
+    });
   }
 
   public isRunning(projectId: string): boolean {

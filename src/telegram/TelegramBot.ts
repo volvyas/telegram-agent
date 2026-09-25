@@ -2,8 +2,8 @@ import {
   Bot,
   type BotConfig,
   type Context,
-  type PollingOptions,
 } from "grammy";
+import { run, type RunnerHandle } from "@grammyjs/runner";
 import type { Update } from "grammy/types";
 
 import type { AuthGuard } from "./AuthGuard.js";
@@ -25,6 +25,7 @@ export interface TelegramBotOptions {
 export class TelegramBot {
   readonly #bot: Bot;
   readonly #logger: TelegramBotLogger | undefined;
+  #runner: RunnerHandle | undefined;
 
   public constructor(options: TelegramBotOptions) {
     this.#bot = new Bot(options.token, options.botConfig);
@@ -40,12 +41,20 @@ export class TelegramBot {
     });
   }
 
-  public start(options?: PollingOptions): Promise<void> {
-    return this.#bot.start(options);
+  public start(): Promise<void> {
+    if (this.#runner?.isRunning() === true) {
+      throw new Error("Telegram bot is already running");
+    }
+    const runner = run(this.#bot, { sink: { concurrency: 16 } });
+    this.#runner = runner;
+    return runner.task() ?? Promise.resolve();
   }
 
-  public stop(): Promise<void> {
-    return this.#bot.stop();
+  public async stop(): Promise<void> {
+    const runner = this.#runner;
+    if (runner === undefined) return;
+    await runner.stop();
+    if (this.#runner === runner) this.#runner = undefined;
   }
 
   public async handleUpdate(update: Update): Promise<void> {

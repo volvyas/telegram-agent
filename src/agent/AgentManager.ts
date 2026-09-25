@@ -184,7 +184,13 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
       if (operation.stopRequested) await this.#agent.stop(run.runId);
-      const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
+      const terminalEvent = await this.#consumeEvents(
+        session,
+        run.runId,
+        run.events,
+        operation.controller.signal,
+        userId,
+      );
       const after = await this.#captureGitSnapshot(project.path);
       const git = createGitTaskSnapshot(before, after);
       history = await this.#finishHistory(history, session.machine.state, git);
@@ -338,7 +344,13 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       if (run.projectId !== projectId) throw new AgentManagerError("RUN_PROJECT_MISMATCH", "Coding agent returned a run for another project", projectId);
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
-      const terminalEvent = await this.#consumeEvents(session, run.runId, run.events, userId);
+      const terminalEvent = await this.#consumeEvents(
+        session,
+        run.runId,
+        run.events,
+        operation.controller.signal,
+        userId,
+      );
       const after = await this.#captureGitSnapshot(project.path);
       const git = createGitTaskSnapshot(before, after);
       history = await this.#finishHistory(history, session.machine.state, git);
@@ -485,10 +497,13 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
     session: ManagedSession,
     runId: string,
     events: AsyncIterable<AgentEvent>,
+    signal: AbortSignal,
     userId?: number,
   ): Promise<AgentTerminalEvent | AgentQuestionEvent> {
+    if (signal.aborted) return this.#recordStoppedEvent(session, runId);
     let terminalEvent: AgentTerminalEvent | AgentQuestionEvent | undefined;
     for await (const event of events) {
+      if (signal.aborted) return this.#recordStoppedEvent(session, runId);
       if (event.projectId !== session.snapshot.projectId || event.runId !== runId) {
         throw new AgentManagerError(
           "EVENT_CONTEXT_MISMATCH",
@@ -523,6 +538,28 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       );
     }
     return terminalEvent;
+  }
+
+  async #recordStoppedEvent(
+    session: ManagedSession,
+    runId: string,
+  ): Promise<AgentTerminalEvent> {
+    const event: AgentTerminalEvent = {
+      type: "stopped",
+      runId,
+      projectId: session.snapshot.projectId,
+      occurredAt: this.#clock().toISOString(),
+      reason: "user",
+    };
+    this.#applyEvent(session, event);
+    this.#updateSnapshot(session, {
+      state: session.machine.state,
+      lastEvent: event,
+      pendingQuestion: undefined,
+    });
+    await this.#persistSession(session);
+    await this.#onEvent?.(event);
+    return event;
   }
 
   async #captureGitSnapshot(repositoryPath: string): Promise<GitSnapshot> {

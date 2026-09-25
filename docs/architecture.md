@@ -149,6 +149,12 @@ update
 і callbacks. Callback payload містить opaque action/confirmation ID; path,
 prompt і command у payload не передаються.
 
+Long polling використовує concurrent grammY runner, щоб control updates на
+кшталт `/stop` оброблялися, поки `/task` або `/test` ще очікує завершення.
+Application-level per-project locks у `AgentManager` лишаються authoritative
+serialization boundary і не дозволяють concurrent runner запускати дві
+несумісні operations для одного project.
+
 Active project зберігається per Telegram user ID. Навіть якщо whitelist спочатку
 містить одного користувача, model не робить singleton-user assumption.
 
@@ -419,6 +425,9 @@ confirmation.
 - **Phase 4:** task IDs/history, confirmations, commit, restart reconciliation.
 - **Phase 5:** logging, robust errors, message boundaries, security review, docs,
   systemd і acceptance.
+- **Phase 5B:** optional read-only Jira adapter behind an `IssueTracker` port;
+  ticket lookup and fixed `assigned to me` search only, with no mutation API or
+  automatic Jira-to-Codex data flow. Detailed plan: [`jira-integration.md`](./jira-integration.md).
 
 ## Phase 2 smoke checklist
 

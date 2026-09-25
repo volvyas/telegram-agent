@@ -211,6 +211,9 @@ Gateway і IntelliJ працюють із тими самими файлами. 
 
 ## Безпека і дані
 
+Повна модель загроз, межі довіри та regression coverage описані в
+[`docs/security.md`](docs/security.md).
+
 - Telegram whitelist middleware виконується до command/text/callback handlers.
 - Codex працює лише у validated configured repository з `workspace-write`, без
   approval escalation, додаткових writable directories і network/search.
