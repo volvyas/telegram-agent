@@ -416,6 +416,7 @@ function validateThreadId(threadId: string): void {
 function isTerminalEvent(event: AgentEvent): boolean {
   return (
     event.type === "completed" ||
+    event.type === "question" ||
     event.type === "stopped" ||
     (event.type === "error" && event.fatal)
   );

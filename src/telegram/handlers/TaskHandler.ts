@@ -76,11 +76,10 @@ export class TaskHandler {
     if (this.#progress === undefined) await context.reply(initialText);
     else await this.#progress.start(project.id, progressTransport(context), initialText);
     try {
-      await this.#agentManager.startTask(project.id, prompt, userId);
+      const task = await this.#agentManager.startTask(project.id, prompt, userId);
       await this.#progress?.flush(project.id);
-      const terminalEvent = this.#agentManager.getSession(project.id)?.lastEvent;
-      const message = formatTerminalEvent(terminalEvent);
-      const keyboard = terminalEvent?.type === "question"
+      const message = formatTerminalEvent(task.terminalEvent);
+      const keyboard = task.terminalEvent.type === "question"
         ? this.#answerHandler?.keyboard(project.id)
         : undefined;
       if (keyboard === undefined) {

@@ -53,11 +53,12 @@ describe("TelegramBot", () => {
     const projectHandler = new ProjectHandler(projectManager());
     vi.spyOn(projectHandler, "handleStart").mockRejectedValue(new Error(token));
     const logger = { error: vi.fn() };
+    const messages: string[] = [];
     const bot = new TelegramBot({
       token,
       authGuard: new AuthGuard(new Set([42])),
       commandRouter: new CommandRouter(projectHandler),
-      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+      botConfig: { botInfo: BOT_INFO, client: { fetch: recordingFetch(messages) } },
       logger,
     });
 
@@ -65,6 +66,7 @@ describe("TelegramBot", () => {
 
     expect(logger.error).toHaveBeenCalledWith(expect.stringMatching(/^Telegram update handling failed Reference: ERR-/u), expect.objectContaining({ diagnosticId: expect.stringMatching(/^ERR-/u) }));
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(token);
+    expect(messages[0]).toMatch(/^Unable to process this request\. Reference: ERR-/u);
   });
 
   it("runs the mocked project-selection to task-result flow end to end", async () => {
@@ -151,6 +153,31 @@ describe("TelegramBot", () => {
     expect(gitHandler.handleGitCommand).toHaveBeenCalledOnce();
     expect(statusHandler.handleStatusCommand).toHaveBeenCalledOnce();
     expect(diffHandler.handleDiffCommand).toHaveBeenCalledOnce();
+  });
+
+  it("does not route slash commands through the generic text handlers", async () => {
+    const projectHandler = new ProjectHandler(projectManager());
+    const taskHandler = {
+      handleTaskCommand: vi.fn(() => Promise.resolve()),
+      handleText: vi.fn(() => Promise.resolve(false)),
+    } as unknown as TaskHandler;
+    const answerHandler = {
+      handleAnswerCommand: vi.fn(() => Promise.resolve()),
+      handleText: vi.fn(() => Promise.resolve()),
+      handleCallback: vi.fn(() => Promise.resolve()),
+    } as unknown as AnswerHandler;
+    const bot = new TelegramBot({
+      token: "123456:test-token",
+      authGuard: new AuthGuard(new Set([42])),
+      commandRouter: new CommandRouter(projectHandler, taskHandler, answerHandler),
+      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+    });
+
+    await bot.handleUpdate(commandUpdate(42, "/task"));
+
+    expect(taskHandler.handleTaskCommand).toHaveBeenCalledOnce();
+    expect(taskHandler.handleText).not.toHaveBeenCalled();
+    expect(answerHandler.handleText).not.toHaveBeenCalled();
   });
 });
 

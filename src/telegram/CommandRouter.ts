@@ -113,6 +113,10 @@ export class CommandRouter {
     if (this.#continueHandler !== undefined) bot.command("continue", (context) => this.#continueHandler?.handleContinueCommand(context));
     if (this.#taskHandler !== undefined || this.#answerHandler !== undefined) {
       bot.on("message:text", async (context) => {
+        // Command middleware handles slash commands above. Do not let a
+        // command also become a pending task prompt or an answer when the
+        // runner processes updates concurrently.
+        if (isSlashCommand(context.message?.text)) return;
         const handledAsTask = await this.#taskHandler?.handleText(context) ?? false;
         if (!handledAsTask) await this.#answerHandler?.handleText(context);
       });
@@ -146,4 +150,8 @@ export class CommandRouter {
       });
     }
   }
+}
+
+function isSlashCommand(text: string | undefined): boolean {
+  return text !== undefined && /^\/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)/u.test(text);
 }

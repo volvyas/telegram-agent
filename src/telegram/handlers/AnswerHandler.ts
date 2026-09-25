@@ -87,10 +87,11 @@ export class AnswerHandler {
       if (this.#progress !== undefined) {
         await this.#progress.start(projectId, progressTransport(context), "Answer sent. Continuing task…");
       }
-      await this.#agentManager.answerQuestion(projectId, questionId, answer, userId);
+      const task = await this.#agentManager.answerQuestion(projectId, questionId, answer, userId);
       await this.#progress?.flush(projectId);
-      const event = this.#agentManager.getSession(projectId)?.lastEvent;
-      await context.reply(event?.type === "completed" ? `Task completed.\n${event.summary}` : "Answer sent.");
+      await context.reply(task.terminalEvent.type === "completed"
+        ? `Task completed.\n${task.terminalEvent.summary}`
+        : "Answer sent.");
     } catch {
       await context.reply("This answer is no longer valid.");
     } finally {

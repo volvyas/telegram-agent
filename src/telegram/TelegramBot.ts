@@ -1,5 +1,6 @@
 import {
   Bot,
+  BotError,
   type BotConfig,
   type Context,
 } from "grammy";
@@ -8,7 +9,7 @@ import type { Update } from "grammy/types";
 
 import type { AuthGuard } from "./AuthGuard.js";
 import type { CommandRouter } from "./CommandRouter.js";
-import { createDiagnosticId, formatTelegramError } from "../errors/TelegramError.js";
+import { createDiagnosticId } from "../errors/TelegramError.js";
 
 export interface TelegramBotLogger {
   error(message: string, fields?: Readonly<Record<string, unknown>>): void;
@@ -35,9 +36,19 @@ export class TelegramBot {
     this.#bot.use(options.authGuard.middleware());
     options.commandRouter.register(this.#bot);
 
-    this.#bot.catch((error) => {
+    this.#bot.catch(async (error) => {
       const diagnosticId = createDiagnosticId();
-      options.logger?.error(formatTelegramError(error, "Telegram update handling failed"), { diagnosticId });
+      options.logger?.error(telegramFailureMessage(diagnosticId), { diagnosticId });
+      // Polling runner errors otherwise only reach the logger, leaving the
+      // user with a silent update. Keep the response generic and correlate it
+      // with the redacted diagnostic entry.
+      if (error instanceof BotError) {
+        try {
+          await error.ctx.reply(`Unable to process this request. Reference: ${diagnosticId}.`);
+        } catch {
+          // The original failure may be a Telegram API outage as well.
+        }
+      }
     });
   }
 
@@ -60,9 +71,24 @@ export class TelegramBot {
   public async handleUpdate(update: Update): Promise<void> {
     try {
       await this.#bot.handleUpdate(update);
-    } catch (error) {
+    } catch (_error) {
       const diagnosticId = createDiagnosticId();
-      this.#logger?.error(formatTelegramError(error, "Telegram update handling failed"), { diagnosticId });
+      this.#logger?.error(telegramFailureMessage(diagnosticId), { diagnosticId });
+      await this.#notifyFailure(update, diagnosticId);
     }
   }
+
+  async #notifyFailure(update: Update, diagnosticId: string): Promise<void> {
+    const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
+    if (chatId === undefined) return;
+    try {
+      await this.#bot.api.sendMessage(chatId, `Unable to process this request. Reference: ${diagnosticId}.`);
+    } catch {
+      // The Telegram API may be the source of the original failure.
+    }
+  }
+}
+
+function telegramFailureMessage(diagnosticId: string): string {
+  return `Telegram update handling failed Reference: ${diagnosticId}.`;
 }

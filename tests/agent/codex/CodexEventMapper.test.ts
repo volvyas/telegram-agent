@@ -57,6 +57,30 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
+  it("does not expose a structured question envelope as progress", () => {
+    const mapper = new CodexEventMapper(context);
+
+    expect(mapper.map(fixture({
+      type: "item.completed",
+      item: {
+        id: "message-question",
+        type: "agent_message",
+        text: JSON.stringify({ kind: "question", question: "Which option?", choices: ["A", "B"] }),
+      },
+    }))).toEqual([]);
+
+    expect(mapper.map(fixture({
+      type: "turn.completed",
+      usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 },
+    }))).toEqual([
+      expect.objectContaining({
+        type: "question",
+        question: "Which option?",
+        choices: ["A", "B"],
+      }),
+    ]);
+  });
+
   it("maps command lifecycle and completed file changes", () => {
     const mapper = new CodexEventMapper(context);
 

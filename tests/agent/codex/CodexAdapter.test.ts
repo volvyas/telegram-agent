@@ -67,6 +67,35 @@ describe("CodexAdapter", () => {
     expect(adapter.getThreadId("motor")).toBe("THREAD-1");
   });
 
+  it("treats a structured question as the terminal outcome of the stream", async () => {
+    const thread = new FakeThread([
+      { type: "thread.started", thread_id: "THREAD-1" },
+      { type: "turn.started" },
+      {
+        type: "item.completed",
+        item: {
+          id: "message-question",
+          type: "agent_message",
+          text: JSON.stringify({ kind: "question", question: "Which option?", choices: ["A", "B"] }),
+        },
+      },
+      { type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+    ]);
+    const adapter = createAdapter(new FakeClient(thread));
+
+    const run = await adapter.start({
+      projectId: "motor",
+      workingDirectory: "/projects/motor",
+      prompt: "Ask me",
+    });
+
+    await expect(collect(run.events)).resolves.toEqual([
+      expect.objectContaining({ type: "thread_started" }),
+      expect.objectContaining({ type: "run_started" }),
+      expect.objectContaining({ type: "question", question: "Which option?", choices: ["A", "B"] }),
+    ]);
+  });
+
   it("resumes and sends messages to the requested persisted thread", async () => {
     const resumedEvents = completedEvents.map((event) =>
       event.type === "thread.started"

@@ -151,6 +151,10 @@ export class CodexEventMapper {
 
     const message = boundedString(item.text, "Codex produced an empty response", MAX_MESSAGE_LENGTH);
     this.#lastAgentMessage = message;
+    // Structured control envelopes are consumed at turn.completed. They are
+    // protocol data, not user-facing progress, so never forward them to the
+    // Telegram progress reporter.
+    if (decodeQuestionOutcome(message) !== undefined) return [];
     return [this.#event({ type: "progress", message, stage: "agent_message" })];
   }
 

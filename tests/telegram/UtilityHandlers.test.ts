@@ -61,6 +61,25 @@ describe("utility command handlers", () => {
     await new ContinueHandler(agent, projects).handleContinueCommand(context(reply));
     expect(reply).toHaveBeenCalledWith("This session is waiting for an answer. Use /answer first.");
   });
+
+  it("uses the continuation result returned by its own operation", async () => {
+    const reply = vi.fn(() => Promise.resolve());
+    const projects = projectHandler();
+    await select(projects, reply);
+    const agent = {
+      getSessionForContinuation: vi.fn(async () => ({
+        projectId: "api", projectPath: "/projects/api", state: "COMPLETED",
+        threadId: "THREAD-1", updatedAt: "2026-09-22T00:00:00.000Z",
+      })),
+      startTask: vi.fn(async () => ({
+        terminalEvent: { type: "completed", summary: "Continuation complete" },
+      })),
+    } as never;
+
+    await new ContinueHandler(agent, projects).handleContinueCommand(context(reply));
+
+    expect(reply).toHaveBeenCalledWith("Task completed.\nContinuation complete");
+  });
 });
 
 function projectHandler(): ProjectHandler {

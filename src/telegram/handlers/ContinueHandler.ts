@@ -48,10 +48,11 @@ export class ContinueHandler {
     if (this.#progress === undefined) await context.reply("Continuing the previous session…");
     else await this.#progress.start(project.id, progressTransport(context), "Continuing the previous session…");
     try {
-      await this.#agent.startTask(project.id, "Continue the previous task.", userId);
+      const task = await this.#agent.startTask(project.id, "Continue the previous task.", userId);
       await this.#progress?.flush(project.id);
-      const event = this.#agent.getSession(project.id)?.lastEvent;
-      await context.reply(event?.type === "completed" ? `Task completed.\n${event.summary}` : "Session continued.");
+      await context.reply(task.terminalEvent.type === "completed"
+        ? `Task completed.\n${task.terminalEvent.summary}`
+        : "Session continued.");
     } catch {
       await context.reply("Unable to continue this session.");
     } finally {

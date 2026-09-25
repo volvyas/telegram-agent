@@ -5,6 +5,7 @@ import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 import type { ProjectManager } from "../../src/projects/ProjectManager.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
 import { ProjectKeyboard } from "../../src/telegram/keyboards/ProjectKeyboard.js";
+import { DashboardKeyboard } from "../../src/telegram/keyboards/DashboardKeyboard.js";
 
 const projects = [
   project("api", "API service", "/private/repos/api"),
@@ -91,6 +92,24 @@ describe("ProjectHandler", () => {
     await handler.handleStart(context({ userId: 42, reply }));
 
     expect(reply).toHaveBeenCalledWith(expect.stringContaining("Available operations: task, test"));
+  });
+
+  it("restores the active project and dashboard after a restart", async () => {
+    const reply = vi.fn(() => Promise.resolve());
+    const storage = {
+      load: vi.fn(async () => ({
+        activeProjects: { "42": { projectId: "api", updatedAt: "2026-09-25T00:00:00.000Z" } },
+      })),
+    } as never;
+    const dashboard = new DashboardKeyboard();
+    const handler = new ProjectHandler(projectManager(projects), undefined, storage, dashboard);
+
+    await handler.handleStart(context({ userId: 42, reply }));
+
+    const options = (reply.mock.calls[0] as unknown[] | undefined)?.[1] as { reply_markup?: unknown } | undefined;
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Active project: API service"), expect.objectContaining({ reply_markup: expect.anything() }));
+    expect(options?.reply_markup).toBeDefined();
+    expect(handler.getActiveProject(42)?.id).toBe("api");
   });
 });
 

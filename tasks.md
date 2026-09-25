@@ -804,11 +804,12 @@ DEV-048 не закривати, доки всі regression tasks не вико�
 
 ---
 
-## Phase 6 — Jira read-only integration
+## Phase 6 — Bug Tracker read-only integration
 
-Повний planned scope і security boundaries: `docs/jira-integration.md`. У цій
-фазі Jira integration не має mutation operations і не передає issue data Codex
-автоматично.
+У цій фазі Bug Tracker integration не має mutation operations і не передає issue data Codex
+автоматично. Ця фаза повинна підтримувати github bug tracker та Jira.
+
+Повний planned scope і security boundaries для Jira: `docs/jira-integration.md`. 
 
 ### [ ] DEV-049 — Дослідити фактичний Jira deployment та REST API
 
