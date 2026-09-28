@@ -1,5 +1,42 @@
 # Live acceptance
 
+## DEV-048 — повторний прогін 2026-09-28
+
+Середовище: реальний Telegram на телефоні, реальний Codex, gateway на локальному
+ноутбуці та clean runtime state. Попередній state збережено в
+`data.acceptance-backup-20260928`. Загальний результат: **PASS — 16/16**.
+
+| # | Definition of Done | Результат | Live evidence |
+|---:|---|---|---|
+| 1 | Запустити gateway | PASS | Gateway запущено з clean state, cleanly перезапущено наприкінці. |
+| 2 | Відкрити Telegram на телефоні | PASS | Усі manual checks виконано на телефоні. |
+| 3 | Виконати `/start` | PASS | Project selector з'явився на fresh start; dashboard відповів і після restart. |
+| 4 | Вибрати repository | PASS | `telegram-agent` вибрано, dashboard показано. |
+| 5 | Написати coding task | PASS | Real Codex task створено й persisted як `TASK-0001`. |
+| 6 | Побачити progress | PASS | Progress показано до terminal result. |
+| 7 | Отримати результат | PASS | Architecture task повернув один clean final result. |
+| 8 | Попросити агента щось уточнити | PASS | Structured question показано human-readable, без raw JSON, з двома buttons. |
+| 9 | Відповісти агенту з Telegram | PASS | `Option A` продовжила той самий thread; `TASK-0002` стала `completed`. |
+| 10 | Побачити зміни через `/diff` | PASS | Український/Unicode content читабельний inline і в document. |
+| 11 | Запустити `/test` | PASS | Concise suite names/results без ANSI fragments і зайвих local paths. |
+| 12 | Зупинити agent через `/stop` | PASS | Counting task зупинено promptly; history має `stopped`, late completion не було. |
+| 13 | Перемкнутися на інший project | PASS | Перемикання project перевірено на телефоні в спільному Phase 4/5 сценарії. |
+| 14 | Повернутися й продовжити session | PASS | `/continue` повернув correct result без trailing `Task failed.`; повторено після restart. |
+| 15 | Підтвердити або відхилити небезпечну операцію | PASS | `/commit` очікував confirmation; Deny скасував operation, HEAD не змінився. |
+| 16 | Restart без втрати project/session/task state | PASS | Active project, thread і task history відновлено; `/start`, `/status`, `/continue` працюють. |
+
+Cross-project storage inspection було пропущено за прямою вказівкою користувача,
+оскільки switching/continuation уже перевірено на телефоні в межах Phase 4;
+post-restart persistence основного project додатково підтверджено storage state.
+
+Regression defects DEV-057—062 пройшли live recheck. Нових відхилень не
+виявлено; окремі defect tasks не потрібні.
+
+Automated gates:
+
+- `npm run build` — PASS.
+- `npm test` — PASS: 40 test files, 196 tests.
+
 ## DEV-048 — повторний прогін 2026-09-25
 
 Середовище: реальний Telegram на телефоні, реальний Codex, gateway на локальному
