@@ -810,118 +810,153 @@ restart persistence. `npm run build` та 196 tests зелені; результ
 
 ---
 
-## Phase 6 — Bug Tracker read-only integration
+## Phase 6 — Generic Bug Tracker read-only integration (GitHub first)
 
-У цій фазі Bug Tracker integration не має mutation operations і не передає issue data Codex
-автоматично. Ця фаза повинна підтримувати github bug tracker та Jira.
+Bug tracker є optional capability окремого project, а не глобальною Jira-
+інтеграцією. `projects.json` визначає provider через discriminated
+`issueTracker.type` (`github` або, у наступній ітерації, `jira`), а application
+працює лише з provider-neutral domain contract. У першій ітерації реалізується
+тільки GitHub Issues; `type: "jira"` є валідним зарезервованим вибором, але
+звернення до нього повертає чітку помилку `unsupported provider`, доки не
+з'явиться `JiraAdapter`.
 
-Повний planned scope і security boundaries для Jira: `docs/jira-integration.md`. 
+Інтеграція залишається виключно read-only, не передає issue data Codex
+автоматично і не додає generic HTTP/request escape hatch. Planned Jira scope і
+security boundaries збережені в `docs/jira-integration.md` для наступної
+ітерації.
 
-### [ ] DEV-049 — Дослідити фактичний Jira deployment та REST API
+### [x] DEV-049 — Дослідити GitHub Issues API та зафіксувати generic architecture
 
-Визначити Cloud/Data Center, supported API version, authentication, current-user
-lookup, issue fields/metadata, search, pagination, rate limits та response
-formats на реальному instance. Використовувати офіційну документацію й
-read-only probes; не створювати і не змінювати issues.
+Перевірити за офіційною GitHub документацією authentication, current-user
+lookup, issue retrieval, assigned-to-me listing, pagination, rate limits,
+response formats і відмінність issue від pull request. Використовувати лише
+read-only probes на test repository; не створювати й не змінювати issues.
 
-**Результат:** доповнений `docs/jira-integration.md` із вибраним integration
-flow, exact endpoints/auth scheme, fixtures без sensitive data та documented
-fallback для відсутніх capabilities.
+**Результат:** `docs/issue-tracker-integration.md` з provider-neutral flow,
+GitHub endpoints/auth scheme, project-to-repository mapping, sanitized fixtures,
+limits і extension point для майбутнього `JiraAdapter`.
 
-**Готово, коли:** facts не суперечать реальному Jira; test account має лише
-browse/read permissions; жоден probe не викликає mutation endpoint.
+**Готово, коли:** facts відповідають реальному GitHub API; визначено, як list
+відкидає pull requests; token має мінімальний read-only access; жоден probe не
+викликає mutation endpoint.
 
-### [ ] DEV-050 — Додати Jira configuration і secret handling
+**Виконано 2026-09-29:** за офіційною GitHub REST documentation і public
+read-only probes зафіксовано versioned GET-only flow, fine-grained `Issues: read`
+permissions, current-user lookup, direct issue lookup, fixed assigned search,
+PR exclusion через `is:issue`, pagination/rate limits, GHES base URL, generic
+extension point та sanitized fixtures у `docs/issue-tracker-integration.md`.
+Authenticated live probe перенесено в DEV-056, бо окремого least-privilege test
+token у environment немає.
 
-**Залежить від:** DEV-049. **Класи:** `JiraConfig`, доповнення `ConfigLoader`.
+### [ ] DEV-050 — Додати project-scoped Bug Tracker configuration і secrets
 
-Валідувати HTTPS base URL без credentials/query/fragment, auth variables,
-project allowlist, custom-field mapping, page size та hard limits. Jira token
-додати до logger redaction; не включати його в errors або serialized config.
-Integration має бути optional і вимкненою без повного набору variables.
+**Залежить від:** DEV-049. **Types:** `IssueTrackerConfig`,
+`GitHubIssueTrackerConfig`, доповнення `ProjectConfig`/`ConfigLoader`.
 
-**Готово, коли:** valid config immutable/typed; partial або unsafe config дає
-safe typed error; unit tests покривають URL, limits, token redaction і disabled
-mode; `.env.example` не містить real credentials.
+Додати optional `issueTracker` як discriminated config з `type`, provider-owned
+settings і bounded limits. Для `github` валідувати owner/repository, optional
+GitHub API base URL для GitHub Enterprise, page size і hard limits. Credential
+брати лише з environment, додати до logger redaction і не серіалізувати в
+project config/storage/errors. Значення `jira` розпізнавати як зарезервований
+provider без вимоги Jira credentials; його використання resolver відхиляє safe
+typed `unsupported provider` до появи adapter.
 
-### [ ] DEV-051 — Визначити domain contract issue tracker
+**Готово, коли:** один gateway може мати projects без tracker і з різними
+tracker types; GitHub config immutable/typed; partial, unknown або unsupported
+GitHub config дає точну безпечну помилку; tests покривають validation, disabled
+mode, GitHub Enterprise URL і token redaction; `projects.example.json` та
+`.env.example` не містять credentials.
 
-**Залежить від:** DEV-049. **Types:** `IssueTracker`, `IssueDetails`, `IssuePage`,
-`IssueKey`, `PageToken`, typed errors.
+### [ ] DEV-051 — Визначити provider-neutral domain contract і resolver
 
-Контракт має підтримувати тільки `getIssue(key)` і `listAssignedToMe(page)`.
-Нормалізувати standard fields, configured custom fields та optional values;
-не експортувати Jira SDK/HTTP або Telegram types і не надавати generic request,
-raw JQL чи write methods.
+**Залежить від:** DEV-049–050. **Types:** `IssueTracker`, `IssueDetails`,
+`IssuePage`, `IssueReference`, `PageToken`, typed errors. **Клас:**
+`IssueTrackerResolver`.
 
-**Готово, коли:** contract компілюється, має fake implementation для tests і
-на рівні type/API не дозволяє create/update/comment/transition operations.
+Контракт підтримує тільки `getIssue(reference)` і
+`listAssignedToMe(page?)`, нормалізує спільні поля та optional provider-specific
+metadata. Resolver обирає adapter за tracker config активного project; handler
+не робить `switch` за provider. Не експортувати GitHub/Jira transport або
+Telegram types, generic request, search language чи write methods.
 
-### [ ] DEV-052 — Реалізувати read-only `JiraAdapter`
+**Готово, коли:** contract має fake implementation і contract tests; resolver
+повертає GitHub adapter, коректно обробляє відсутній/unsupported provider, а
+type/API не дозволяє create/update/comment/transition operations.
 
-**Залежить від:** DEV-050–051. **Клас:** `JiraAdapter implements IssueTracker`.
+### [ ] DEV-052 — Реалізувати read-only `GitHubIssueTracker`
 
-Реалізувати current-user resolution, issue lookup, fixed assigned-to-me search,
-field projection і bounded pagination відповідно до DEV-049. Додати timeout,
-AbortSignal, response-size limits, same-origin redirect policy, safe retry та
-runtime validation response shape. Якщо search потребує POST, дозволити його
-лише для конкретного read-only endpoint і adapter-owned body.
+**Залежить від:** DEV-050–051. **Клас:**
+`GitHubIssueTracker implements IssueTracker`.
 
-**Готово, коли:** fixture/transport tests покривають successful lookup/list,
-empty result, pagination, absent/custom fields, auth/permission/not-found,
-429, timeout, malformed/oversized response та abort; жодного mutation endpoint.
+Реалізувати current-user resolution, issue lookup у configured repository та
+fixed assigned-to-me listing. Нормалізувати title/state/author/assignees/labels/
+milestone/body/timestamps/URL, виключати pull requests і підтримати bounded
+pagination. Додати timeout, AbortSignal, response-size limits, same-origin
+redirect policy, safe rate-limit retry та runtime validation response shape.
 
-### [ ] DEV-053 — Додати читання Jira ticket у Telegram
+**Готово, коли:** fixture/transport tests покривають lookup/list, empty result,
+pagination, pull-request filtering, absent fields, public/private repository,
+GitHub Enterprise, auth/permission/not-found/rate-limit, timeout,
+malformed/oversized response та abort; adapter ніколи не використовує mutation
+endpoint або write HTTP method.
 
-**Залежить від:** DEV-052. **Класи:** `JiraHandler`, `JiraIssueFormatter`.
+### [ ] DEV-053 — Додати generic issue lookup у Telegram
 
-Додати `/jira <KEY>` із bounded key validation, project allowlist, plain-text
-rendering standard/configured custom fields і `MessageSender` для довгого
-description. Не показувати comments/attachments/worklogs/changelog default і
-не передавати ticket agent session.
+**Залежить від:** DEV-052. **Класи:** `IssueTrackerHandler`, `IssueFormatter`.
 
-**Готово, коли:** authorized handler tests покривають повні/відсутні поля,
-Unicode/ADF, oversized content, unknown/forbidden key та Telegram-safe errors;
-callback/user input не може змінити origin, endpoint або field projection.
+Додати provider-neutral `/issue <REFERENCE>`, який використовує tracker
+активного project. Для GitHub перша ітерація приймає bounded numeric issue
+number (із optional `#`), а repository завжди бере з operator-owned project
+config. Виводити normalized plain text через `MessageSender`; не завантажувати
+comments/events/attachments і не передавати issue agent session.
 
-### [ ] DEV-054 — Додати список tickets `assigned to me`
+**Готово, коли:** authorized handler tests покривають project без tracker,
+unsupported provider, valid/invalid reference, повні/відсутні поля, Unicode,
+oversized body, not-found/forbidden і Telegram-safe errors; user input не може
+змінити provider, origin, owner, repository або requested field set.
+
+### [ ] DEV-054 — Додати generic список issues `assigned to me`
 
 **Залежить від:** DEV-052–053.
 
-Додати `/jira mine`: adapter формує fixed query для current Jira account,
-детерміновано сортує, повертає bounded page й opaque next/previous callbacks.
-Pagination state прив'язати до Telegram user, query kind і short TTL; arbitrary
-JQL або чужий account ID не приймати.
+Додати `/issue mine`: handler викликає provider-neutral method, а GitHub adapter
+формує fixed query для authenticated account та configured repository,
+детерміновано сортує й повертає bounded page. Next/previous callbacks є opaque,
+мають short TTL і прив'язані до Telegram user, project, provider та query kind;
+довільний GitHub search query або чужий login не приймати.
 
-**Готово, коли:** tests покривають empty/single/multiple pages, stale/forged/
-wrong-user callback, max-page cap та stable formatting; Telegram data не може
-розширити assigned-to-me query.
+**Готово, коли:** tests покривають empty/single/multiple pages, pull requests,
+stale/forged/wrong-user/wrong-project callback, max-page cap і stable formatting;
+Telegram data не може розширити assigned-to-me query.
 
-### [ ] DEV-055 — Security, resilience і regression review Jira
+### [ ] DEV-055 — Security, resilience і provider-isolation review
 
 **Залежить від:** DEV-053–054.
 
-Перевірити least-privilege account, allowlisted origin/endpoints/projects,
-secret/PII redaction, SSRF/redirect handling, JQL/key injection, rich-text
-sanitization, response/output limits, rate-limit retry та shutdown abort.
-Зафіксувати Jira trust boundary в `docs/security.md`.
+Перевірити least-privilege token, allowlisted origins/endpoints/repositories,
+secret/PII redaction, SSRF/redirect handling, reference/query injection,
+untrusted Markdown/HTML normalization, response/output limits, rate-limit retry,
+shutdown abort і відсутність state leakage між projects/providers. Зафіксувати
+generic trust boundary та GitHub-specific constraints у `docs/security.md`.
 
-**Готово, коли:** focused Jira security suite не знаходить mutation path,
-cross-origin request, arbitrary JQL або credential leakage; fault injection не
-залишає pending pagination state чи uncaught errors.
+**Готово, коли:** focused security suite не знаходить mutation path,
+cross-origin request, arbitrary repository/search query або credential leakage;
+project A не може прочитати tracker project B; fault injection не залишає
+pending pagination state чи uncaught errors.
 
-### [ ] DEV-056 — Jira documentation і live read-only acceptance
+### [ ] DEV-056 — GitHub documentation і live read-only acceptance
 
 **Залежить від:** DEV-055.
 
-Оновити README: створення least-privilege credentials, env/config, commands,
-field mapping, limits, data handling і troubleshooting. Провести opt-in test на
-read-only Jira account та Telegram acceptance для issue lookup, assigned list,
-empty result, unavailable field і pagination.
+Оновити README: project-level provider selection, least-privilege GitHub token,
+GitHub.com/Enterprise config, generic commands, limits, data handling,
+unsupported Jira behavior і troubleshooting. Провести opt-in test з read-only
+GitHub token та Telegram acceptance для lookup, assigned list, project
+switching, empty result, unavailable field і pagination.
 
-**Готово, коли:** build/test/security suites зелені; acceptance не змінює Jira
-data; результати записані в `docs/acceptance.md`, а всі відхилення мають окремі
-tasks.
+**Готово, коли:** build/test/security suites зелені; acceptance не змінює
+GitHub data; два projects із різною tracker configuration ізольовані; результати
+записані в `docs/acceptance.md`, а всі відхилення мають окремі tasks.
 
 ---
 
@@ -934,7 +969,8 @@ Issue history and defect verification are tracked separately in `issues.md`.
 - **Після DEV-034:** доступні Git/status/diff/test/stop і повний dashboard.
 - **Після DEV-041:** task history, confirmations і commit є persistent та safe.
 - **Після DEV-048:** виконано повний Definition of Done.
-- **Після DEV-056:** Jira read-only lookup і `assigned to me` пройшли live acceptance.
+- **Після DEV-056:** generic Bug Tracker flow з першим GitHub provider пройшов
+  live read-only acceptance.
 - **Після DEV-057—062:** повторна DEV-048 acceptance не має
   encoding/stop/test-output/question-flow regressions; details у `issues.md`.
 
@@ -945,4 +981,5 @@ Issue history and defect verification are tracked separately in `issues.md`.
 - PostgreSQL до появи реальної потреби в ньому.
 - Автоматичні `git push`, `reset --hard`, `clean` або discard changes.
 - Доступ Telegram-користувача до довільної файлової системи чи shell command.
-- Будь-які Jira mutations: create/edit/transition/comment/assign/attach/worklog.
+- Будь-які Bug Tracker mutations: create/edit/transition/comment/assign/attach/worklog.
+- Реалізація `JiraAdapter` (provider type зарезервовано для наступної ітерації).
