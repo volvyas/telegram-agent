@@ -64,6 +64,27 @@ describe("AgentManager", () => {
     expect(Object.isFrozen(manager.getSession("motor"))).toBe(true);
   });
 
+  it("ignores non-terminal Codex events after an issue proposal", async () => {
+    const agent = new FakeCodingAgent((options) => run(options.projectId, "RUN-1", [
+      event("thread_started", options.projectId, "RUN-1", { threadId: "THREAD-1" }),
+      event("issue_proposal", options.projectId, "RUN-1", {
+        proposal: {
+          kind: "issue_creation",
+          provider: "github",
+          projectId: options.projectId,
+          draft: { summary: "Summary", description: "Description" },
+        },
+      }),
+      event("progress", options.projectId, "RUN-1", { message: "Trailing bookkeeping" }),
+    ]));
+    const manager = createManager(agent);
+
+    await expect(manager.startTask("motor", "Create an issue proposal")).resolves.toMatchObject({
+      state: "COMPLETED",
+      terminalEvent: { type: "issue_proposal" },
+    });
+  });
+
   it("rejects a second operation for one project and releases the lock", async () => {
     const motorGate = deferredEvents();
     let startCount = 0;

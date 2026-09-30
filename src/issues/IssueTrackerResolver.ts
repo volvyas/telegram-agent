@@ -7,23 +7,31 @@ import {
   IssueTrackerError,
   type IssueTracker,
 } from "./IssueTracker.js";
+import type { IssueWriter } from "./IssueWriter.js";
 
 /** Construction seam implemented by the GitHub adapter in DEV-052. */
 export type GitHubIssueTrackerFactory = (
   config: GitHubIssueTrackerConfig,
   token: string,
 ) => IssueTracker;
+export type GitHubIssueWriterFactory = (
+  config: GitHubIssueTrackerConfig,
+  token: string,
+) => IssueWriter;
 
 export class IssueTrackerResolver {
   readonly #secrets: IssueTrackerSecrets;
   readonly #createGitHubTracker: GitHubIssueTrackerFactory;
+  readonly #createGitHubWriter: GitHubIssueWriterFactory | undefined;
 
   public constructor(
     secrets: IssueTrackerSecrets,
     createGitHubTracker: GitHubIssueTrackerFactory,
+    createGitHubWriter?: GitHubIssueWriterFactory,
   ) {
     this.#secrets = secrets;
     this.#createGitHubTracker = createGitHubTracker;
+    this.#createGitHubWriter = createGitHubWriter;
   }
 
   public resolve(project: ProjectConfig): IssueTracker {
@@ -53,5 +61,15 @@ export class IssueTrackerResolver {
       );
     }
     return this.#createGitHubTracker(config, token);
+  }
+
+  public resolveWriter(project: ProjectConfig): IssueWriter {
+    const config = project.issueTracker;
+    if (config?.type !== "github" || config.allowCreation !== true || this.#createGitHubWriter === undefined) {
+      throw new IssueTrackerError("NOT_CONFIGURED", "Issue creation is not enabled for this project", { projectId: project.id });
+    }
+    const token = this.#secrets.getGitHubWriteToken(project.id);
+    if (token === undefined) throw new IssueTrackerError("CREDENTIAL_UNAVAILABLE", "Issue tracker credential is unavailable", { provider: "github", projectId: project.id });
+    return this.#createGitHubWriter(config, token);
   }
 }

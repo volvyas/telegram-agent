@@ -989,6 +989,89 @@ multi-page, private або Jira сценаріїв, тому їх позначе
 
 ---
 
+## Phase 7 — Agent-authored Bug Tracker issue creation
+
+Issue creation є optional project-scoped capability і за замовчуванням
+вимкнена. Read-only `IssueTracker` не розширюється write methods: mutation
+виконує окремий provider-neutral port лише через gateway-owned policy та
+confirmation. Agent не отримує GitHub token, HTTP client, довільний endpoint
+або можливість самостійно обрати repository.
+
+### [x] DEV-064 — Дозволити агенту сформувати й після confirmation створити issue
+
+**Залежить від:** DEV-041, DEV-052–056. **Types/classes:** `IssueDraft`,
+`IssueCreationProposal`, `IssueWriter`, `IssueCreationService`,
+`GitHubIssueWriter`, доповнення agent event/output contract, project config,
+confirmation flow і Telegram handler.
+
+Додати flow, у якому agent на основі поточного task/session context сам формує
+bounded draft issue, подібний до запису в `issues.md`:
+
+- `summary` — короткий конкретний заголовок без local paths, secrets або raw
+  exception payload;
+- `description` — Markdown із секціями context/observed behavior, evidence або
+  reproduction, expected behavior та acceptance criteria;
+- неперевірені припущення позначаються явно; agent не вигадує logs, request IDs,
+  affected versions чи кроки відтворення, яких не спостерігав;
+- draft може запропонувати agent після виявлення окремого дефекту або на явний
+  запит користувача, але не виконує mutation сам.
+
+Agent повертає тільки typed `IssueCreationProposal`; gateway runtime-validates,
+normalizes і redacts його, прив'язує до active user/project/provider та показує
+користувачу точний preview `summary + description`. Створення дозволене лише
+після explicit одноразового Telegram confirmation. `Deny`, expiry, forged/
+replayed callback, project switch, restart без відновлюваного draft або зміна
+configured tracker скасовують proposal без network request. До confirmation не
+може бути жодного write call.
+
+Не додавати `createIssue` до read-only `IssueTracker`. Окремий `IssueWriter`
+експортує лише `createIssue(draft)` і повертає normalized reference/URL. Для
+GitHub дозволити тільки fixed
+`POST /repos/{configuredOwner}/{configuredRepository}/issues` з body
+`{ title, body }`; labels, assignees, milestone, project fields, comments,
+close/reopen/edit та інші mutations лишаються поза API. Origin/repository/API
+version походять тільки з validated project config, redirects заборонені,
+response bounded і runtime-validated.
+
+Write capability має окремий explicit config flag/operation і окремий
+environment-only `writeTokenEnv`; чинний read token не можна мовчки підвищувати
+до write access. GitHub credential — fine-grained token, обмежений configured
+repository, з `Issues: Read and write`, мінімальним expiration та organization
+approval за потреби. Write token додається до redaction і ніколи не потрапляє в
+agent input, project config value, storage, Telegram, error або URL.
+
+Встановити hard limits щонайменше для summary, description і proposal lifetime;
+відкидати control characters та застосовувати configured secret redaction до
+preview/request. Draft body за замовчуванням не persist-ити: після restart
+pending create confirmation стає invalid. Confirmation consume має бути
+atomic/one-shot. `POST` не retry-ити автоматично: timeout/network failure після
+відправлення є ambiguous outcome, тому gateway повідомляє перевірити tracker і
+не створює можливий duplicate повторно.
+
+**Готово, коли:**
+
+- fake agent/contract tests доводять, що agent сам формує структуровані
+  `summary`/`description`, а malformed/oversized або secret-bearing proposal не
+  доходить до writer;
+- handler/integration tests покривають preview, allow/deny/expiry, replay,
+  wrong-user/wrong-project, switch/restart, disabled capability, unsupported
+  provider та відсутній write credential;
+- GitHub transport tests перевіряють рівно один fixed `POST` після confirmation,
+  exact allowlisted JSON fields, GitHub.com/GHES, auth/permission/rate-limit,
+  malformed/oversized response, abort і ambiguous timeout без automatic retry;
+- security tests доводять, що prompt/Telegram input не може змінити provider,
+  origin, repository, HTTP method або додати labels/assignees/comments, а read-
+  only flows і projects без write capability не отримують mutation path;
+- README/security/architecture описують opt-in write token, preview/
+  confirmation, data lifetime, audit/error behavior і незмінно заборонені
+  mutations;
+- opt-in live acceptance у dedicated test repository створює рівно одне
+  clearly labelled issue з agent-authored summary/description лише після
+  `Allow`; `Deny` і повторний callback не змінюють tracker. Результат і ручне
+  cleanup задокументовані без token або private issue body.
+
+---
+
 Issue history and defect verification are tracked separately in `issues.md`.
 
 ## Контрольні точки
@@ -1000,6 +1083,8 @@ Issue history and defect verification are tracked separately in `issues.md`.
 - **Після DEV-048:** виконано повний Definition of Done.
 - **Після DEV-056:** generic Bug Tracker flow з першим GitHub provider пройшов
   live read-only acceptance.
+- **Після DEV-064:** agent може запропонувати й після explicit confirmation
+  створити bounded issue у configured tracker без доступу до довільних writes.
 - **Після DEV-057—062:** повторна DEV-048 acceptance не має
   encoding/stop/test-output/question-flow regressions; details у `issues.md`.
 
@@ -1010,5 +1095,6 @@ Issue history and defect verification are tracked separately in `issues.md`.
 - PostgreSQL до появи реальної потреби в ньому.
 - Автоматичні `git push`, `reset --hard`, `clean` або discard changes.
 - Доступ Telegram-користувача до довільної файлової системи чи shell command.
-- Будь-які Bug Tracker mutations: create/edit/transition/comment/assign/attach/worklog.
+- Bug Tracker edit/transition/comment/assign/attach/worklog та будь-який create
+  поза explicit DEV-064 confirmation flow.
 - Реалізація `JiraAdapter` (provider type зарезервовано для наступної ітерації).

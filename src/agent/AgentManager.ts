@@ -161,17 +161,18 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       session = prepared.session;
       operation.session = session;
       await this.#persistSession(session);
+      const agentPrompt = prepareAgentPrompt(prompt);
       const run = prepared.threadId === undefined
         ? await this.#agent.start({
             projectId,
             workingDirectory: project.path,
-            prompt,
+            prompt: agentPrompt,
           })
         : await this.#agent.resume({
             projectId,
             workingDirectory: project.path,
             threadId: prepared.threadId,
-            prompt,
+            prompt: agentPrompt,
           });
       if (run.projectId !== projectId) {
         throw new AgentManagerError(
@@ -191,7 +192,14 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         operation.controller.signal,
         userId,
       );
-      const after = await this.#captureGitSnapshot(project.path);
+      // A completed agent turn must not be reported as failed because a
+      // best-effort post-run Git snapshot could not be collected.
+      let after = before;
+      try {
+        after = await this.#captureGitSnapshot(project.path);
+      } catch {
+        // Preserve the pre-run snapshot; the task result remains authoritative.
+      }
       const git = createGitTaskSnapshot(before, after);
       history = await this.#finishHistory(history, session.machine.state, git);
       return this.#createTaskRecord(
@@ -464,7 +472,11 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       return { session };
     }
 
-    const threadId = existing.snapshot.threadId;
+    // A failed stream is not a safe continuation point. Start a fresh thread
+    // so a transient/invalid Codex process cannot make every later task fail.
+    const threadId = existing.machine.state === "FAILED"
+      ? undefined
+      : existing.snapshot.threadId;
     const reason = existing.machine.state === "IDLE" ? "task_started" : "continued";
     existing.machine.transition(reason);
     this.#updateSnapshot(existing, {
@@ -512,11 +524,10 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         );
       }
       if (terminalEvent !== undefined) {
-        throw new AgentManagerError(
-          "EVENT_AFTER_TERMINAL",
-          "Coding agent emitted an event after a terminal outcome",
-          session.snapshot.projectId,
-        );
+        // The Codex stream can emit bookkeeping or duplicate terminal items
+        // after the first terminal outcome. The first terminal outcome is
+        // authoritative and later items must not invalidate the turn.
+        continue;
       }
 
       terminalEvent = this.#applyEvent(session, event) ?? terminalEvent;
@@ -629,6 +640,9 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       case "completed":
         if (session.machine.can("turn_completed")) session.machine.transition("turn_completed");
         return event;
+      case "issue_proposal":
+        if (session.machine.can("turn_completed")) session.machine.transition("turn_completed");
+        return event;
       case "stopped":
         if (session.machine.can("stop_requested")) session.machine.transition("stop_requested");
         return event;
@@ -689,6 +703,30 @@ function taskStatus(state: AgentState): Exclude<PersistedTaskStatus, "pending" |
     case "IDLE":
     case "RUNNING": return "failed";
   }
+}
+
+function prepareAgentPrompt(prompt: string): string {
+  if (!looksLikeIssueCreationRequest(prompt)) return prompt;
+  return [
+    "Gateway protocol for this request:",
+    "The user is asking for a bug tracker issue proposal.",
+    "Investigate the defect locally, but do not create an issue yourself.",
+    "Do not use a GitHub API, GitHub CLI, connector, git push, or any network mutation.",
+    "Never inspect .git/config or any credential-bearing Git metadata; never print, copy, or include credentials, authenticated remote URLs, or secrets.",
+    "When finished, your final agent message must be only this JSON object, with no Markdown fences or extra text:",
+    '{"kind":"issue_creation","provider":"github","draft":{"summary":"...","description":"..."}}',
+    "The summary must be concise and contain no local paths, secrets, or raw exception payloads.",
+    "The description must contain Markdown headings exactly for Context, Observed behavior, Evidence or reproduction, Expected behavior, and Acceptance criteria.",
+    "Mark unverified assumptions explicitly and do not invent observations.",
+    "If the defect cannot be established from local evidence, return a normal explanation instead of fabricating a proposal.",
+    "",
+    "User request:",
+    prompt,
+  ].join("\n");
+}
+
+function looksLikeIssueCreationRequest(prompt: string): boolean {
+  return /\b(?:create|open|file|submit|report|log)\b[\s\S]{0,80}\b(?:issue|bug)\b|\b(?:issue|bug)\b[\s\S]{0,80}\b(?:create|open|file|submit|report|log)\b/iu.test(prompt);
 }
 
 function createActiveOperation(projectId: string, kind: ActiveOperation["kind"]): ActiveOperation {

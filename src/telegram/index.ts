@@ -16,6 +16,7 @@ export * from "./handlers/HelpHandler.js";
 export * from "./handlers/LogHandler.js";
 export * from "./handlers/ContinueHandler.js";
 export * from "./handlers/ConfirmationHandler.js";
+export * from "./handlers/IssueCreationHandler.js";
 export * from "./handlers/CommitHandler.js";
 export * from "./keyboards/DashboardKeyboard.js";
 export * from "./keyboards/ProjectKeyboard.js";

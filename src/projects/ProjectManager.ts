@@ -170,7 +170,7 @@ function parseOptionalIssueTracker(
 
   assertExactKeys(
     value,
-    ["type", "owner", "repository", "tokenEnv", "apiBaseUrl", "apiVersion", "pageSize"],
+    ["type", "owner", "repository", "tokenEnv", "writeTokenEnv", "apiBaseUrl", "apiVersion", "pageSize", "allowCreation"],
     projectId,
   );
   const owner = readGitHubName(value.owner, projectId, "owner", GITHUB_OWNER_MAX_LENGTH);
@@ -198,15 +198,32 @@ function parseOptionalIssueTracker(
   if (typeof pageSize !== "number" || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > GITHUB_MAX_PAGE_SIZE) {
     throw invalidTracker(projectId, `issueTracker.pageSize must be between 1 and ${GITHUB_MAX_PAGE_SIZE}`);
   }
+  if (value.allowCreation !== undefined && typeof value.allowCreation !== "boolean") {
+    throw invalidTracker(projectId, "issueTracker.allowCreation must be a boolean");
+  }
+  const writeTokenEnv = value.writeTokenEnv === undefined
+    ? undefined
+    : readTrackerString(value.writeTokenEnv, projectId, "writeTokenEnv", 128);
+  if (writeTokenEnv !== undefined && !ENVIRONMENT_NAME_PATTERN.test(writeTokenEnv)) {
+    throw invalidTracker(projectId, "issueTracker.writeTokenEnv must be a bounded environment variable name");
+  }
+  if (value.allowCreation === true && writeTokenEnv === tokenEnv) {
+    throw invalidTracker(projectId, "issueTracker.writeTokenEnv must differ from issueTracker.tokenEnv");
+  }
+  if (value.allowCreation === true && writeTokenEnv === undefined) {
+    throw invalidTracker(projectId, "issueTracker.writeTokenEnv is required when issue creation is enabled");
+  }
 
   return Object.freeze({
     type: "github",
     owner,
     repository,
     tokenEnv,
+    ...(writeTokenEnv === undefined ? {} : { writeTokenEnv }),
     apiBaseUrl,
     apiVersion,
     pageSize,
+    ...(value.allowCreation === true ? { allowCreation: true } : {}),
     limits: GITHUB_ISSUE_TRACKER_LIMITS,
   } satisfies GitHubIssueTrackerConfig);
 }
@@ -431,6 +448,7 @@ async function inspectRepository(
       { projectId },
     );
   }
+
   return canonicalPath;
 }
 

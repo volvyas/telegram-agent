@@ -17,7 +17,19 @@ export type AgentEvent =
   | AgentWarningEvent
   | AgentErrorEvent
   | AgentCompletedEvent
+  | AgentIssueProposalEvent
   | AgentStoppedEvent;
+
+// Data only: the gateway owns validation, confirmation, and mutation.
+export interface AgentIssueProposalEvent extends AgentEventBase {
+  readonly type: "issue_proposal";
+  readonly proposal: {
+    readonly kind: "issue_creation";
+    readonly provider: "github" | "jira";
+    readonly projectId: string;
+    readonly draft: { readonly summary: string; readonly description: string };
+  };
+}
 
 export interface AgentThreadStartedEvent extends AgentEventBase {
   readonly type: "thread_started";
@@ -77,5 +89,6 @@ export interface AgentStoppedEvent extends AgentEventBase {
 
 export type AgentTerminalEvent =
   | AgentCompletedEvent
+  | AgentIssueProposalEvent
   | (AgentErrorEvent & { readonly fatal: true })
   | AgentStoppedEvent;

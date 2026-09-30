@@ -31,9 +31,13 @@ export interface GitHubIssueTrackerConfig {
   readonly repository: string;
   /** Name of the environment variable containing the credential, never its value. */
   readonly tokenEnv: string;
+  /** Separate opt-in mutation credential; never falls back to tokenEnv. */
+  readonly writeTokenEnv?: string;
   readonly apiBaseUrl: string;
   readonly apiVersion: string;
   readonly pageSize: number;
+  /** Explicit opt-in; read-only remains the default. */
+  readonly allowCreation?: boolean;
   readonly limits: GitHubIssueTrackerLimits;
 }
 
@@ -50,16 +54,25 @@ export type IssueTrackerConfig = GitHubIssueTrackerConfig | JiraIssueTrackerConf
  */
 export class IssueTrackerSecrets {
   readonly #githubTokens: ReadonlyMap<string, string>;
+  readonly #githubWriteTokens: ReadonlyMap<string, string>;
   readonly #redactionValues: readonly string[];
 
-  public constructor(githubTokens: ReadonlyMap<string, string>) {
+  public constructor(
+    githubTokens: ReadonlyMap<string, string>,
+    githubWriteTokens: ReadonlyMap<string, string> = new Map(),
+  ) {
     this.#githubTokens = new Map(githubTokens);
-    this.#redactionValues = Object.freeze([...new Set(githubTokens.values())]);
+    this.#githubWriteTokens = new Map(githubWriteTokens);
+    this.#redactionValues = Object.freeze([...new Set([...githubTokens.values(), ...githubWriteTokens.values()])]);
     Object.freeze(this);
   }
 
   public getGitHubToken(projectId: string): string | undefined {
     return this.#githubTokens.get(projectId);
+  }
+
+  public getGitHubWriteToken(projectId: string): string | undefined {
+    return this.#githubWriteTokens.get(projectId);
   }
 
   public redactionValues(): readonly string[] {

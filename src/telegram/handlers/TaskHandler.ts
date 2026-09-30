@@ -5,6 +5,7 @@ import type { AgentEvent } from "../../agent/AgentEvent.js";
 import type { ProjectHandler } from "./ProjectHandler.js";
 import type { AnswerHandler } from "./AnswerHandler.js";
 import type { ProgressReporter, ProgressTransport } from "../ProgressReporter.js";
+import type { IssueCreationHandler } from "./IssueCreationHandler.js";
 
 const MAX_TASK_LENGTH = 32_000;
 const MAX_TELEGRAM_MESSAGE_LENGTH = 4_096;
@@ -15,12 +16,14 @@ export class TaskHandler {
   readonly #pendingTaskUsers = new Set<number>();
   readonly #answerHandler: AnswerHandler | undefined;
   readonly #progress: ProgressReporter | undefined;
+  readonly #issueCreation: IssueCreationHandler | undefined;
 
-  public constructor(agentManager: AgentManager, projectHandler: ProjectHandler, answerHandler?: AnswerHandler, progress?: ProgressReporter) {
+  public constructor(agentManager: AgentManager, projectHandler: ProjectHandler, answerHandler?: AnswerHandler, progress?: ProgressReporter, issueCreation?: IssueCreationHandler) {
     this.#agentManager = agentManager;
     this.#projectHandler = projectHandler;
     this.#answerHandler = answerHandler;
     this.#progress = progress;
+    this.#issueCreation = issueCreation;
   }
 
   public async handleTaskCommand(context: Context): Promise<void> {
@@ -82,13 +85,18 @@ export class TaskHandler {
       const keyboard = task.terminalEvent.type === "question"
         ? this.#answerHandler?.keyboard(project.id)
         : undefined;
-      if (keyboard === undefined) {
-        await context.reply(message);
-      } else {
-        await context.reply(message, { reply_markup: keyboard });
+      if (task.terminalEvent.type !== "issue_proposal") {
+        if (keyboard === undefined) await context.reply(message);
+        else await context.reply(message, { reply_markup: keyboard });
       }
-    } catch {
-      await context.reply("Task failed.");
+      if (task.terminalEvent.type === "issue_proposal") {
+        await this.#issueCreation?.present(context, task.terminalEvent);
+      }
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string"
+        ? ` (${error.code})`
+        : "";
+      await context.reply(`Task failed${code}.`);
     } finally {
       this.#progress?.stop(project.id);
     }

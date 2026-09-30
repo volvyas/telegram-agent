@@ -156,6 +156,14 @@ configuration; Telegram user не може їх змінити. `jira` можн�
 зарезервований provider, але до появи Jira adapter він безпечно повертає
 повідомлення про непідтримуваний provider.
 
+Створення issue — окремий opt-in. Для нього додайте `allowCreation: true` і
+окремий `writeTokenEnv` із fine-grained token, що має `Issues: Read and write`
+лише для configured repository. Read token із `tokenEnv` ніколи не підвищується
+автоматично. Agent спочатку показує точний bounded preview, а `POST` виконується
+лише після одноразового Telegram `Allow once`; `Deny`, expiry або повторний
+callback не виконують network mutation. Timeout після POST не повторюється
+автоматично.
+
 ## Ручний запуск
 
 Development mode з автоматичним restart після змін:

@@ -5,6 +5,7 @@ import type {
   AgentCommandEvent,
   AgentEvent,
   AgentEventBase,
+  AgentIssueProposalEvent,
 } from "../AgentEvent.js";
 
 const MAX_DIAGNOSTICS = 20;
@@ -58,6 +59,8 @@ export class CodexEventMapper {
       case "turn.started":
         return [this.#event({ type: "run_started" })];
       case "turn.completed": {
+        const proposal = decodeIssueProposal(this.#lastAgentMessage);
+        if (proposal !== undefined) return [this.#event({ type: "issue_proposal", proposal: { ...proposal, projectId: this.#projectId } })];
         const question = decodeQuestionOutcome(this.#lastAgentMessage);
         if (question !== undefined) {
           return [this.#event({ type: "question", ...question })];
@@ -326,6 +329,15 @@ function decodeQuestionOutcome(message: string | undefined): {
     question,
     choices: Object.freeze(choices),
   });
+}
+
+function decodeIssueProposal(message: string | undefined): AgentIssueProposalEvent["proposal"] | undefined {
+  if (message === undefined) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(message) as unknown; } catch { return undefined; }
+  if (!isRecord(value) || value.kind !== "issue_creation" || value.provider !== "github" || !isRecord(value.draft)) return undefined;
+  if (typeof value.draft.summary !== "string" || typeof value.draft.description !== "string") return undefined;
+  return Object.freeze({ kind: "issue_creation", provider: value.provider, projectId: "", draft: Object.freeze({ summary: value.draft.summary, description: value.draft.description }) });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

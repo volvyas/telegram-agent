@@ -110,6 +110,7 @@ export class ConfigLoader {
     projects: readonly ProjectConfig[],
   ): IssueTrackerSecrets {
     const tokens = new Map<string, string>();
+    const writeTokens = new Map<string, string>();
     for (const project of projects) {
       if (project.issueTracker?.type !== "github") continue;
       const token = this.#environment[project.issueTracker.tokenEnv]?.trim();
@@ -121,8 +122,16 @@ export class ConfigLoader {
         );
       }
       tokens.set(project.id, token);
+      if (project.issueTracker.allowCreation === true) {
+        const writeTokenEnv = project.issueTracker.writeTokenEnv;
+        const writeToken = writeTokenEnv === undefined ? undefined : this.#environment[writeTokenEnv]?.trim();
+        if (writeTokenEnv === undefined || writeToken === undefined || writeToken.length === 0) {
+          throw new ConfigError("ISSUE_TRACKER_WRITE_CREDENTIAL_REQUIRED", `Required issue tracker write credential for project ${project.id} is missing`, writeTokenEnv === undefined ? {} : { variableName: writeTokenEnv });
+        }
+        writeTokens.set(project.id, writeToken);
+      }
     }
-    return new IssueTrackerSecrets(tokens);
+    return new IssueTrackerSecrets(tokens, writeTokens);
   }
 }
 

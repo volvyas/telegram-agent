@@ -5,6 +5,7 @@ export type {
   AgentEvent,
   AgentEventBase,
   AgentFilesChangedEvent,
+  AgentIssueProposalEvent,
   AgentProgressEvent,
   AgentQuestionEvent,
   AgentRunId,

@@ -33,6 +33,9 @@ import { StructuredLogger } from "../logging/StructuredLogger.js";
 import { IssueTrackerResolver } from "../issues/IssueTrackerResolver.js";
 import { GitHubIssueTracker } from "../issues/GitHubIssueTracker.js";
 import { IssueTrackerHandler } from "../telegram/handlers/IssueTrackerHandler.js";
+import { GitHubIssueWriter } from "../issues/GitHubIssueWriter.js";
+import { IssueCreationService } from "../issues/IssueCreationService.js";
+import { IssueCreationHandler } from "../telegram/handlers/IssueCreationHandler.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -116,6 +119,7 @@ export class Application {
     const adapter = new CodexAdapter({
       environment,
       ...(config.codexHome === undefined ? {} : { codexHome: config.codexHome }),
+      protectedPaths: projectManager.list().map((project) => resolve(project.path, ".git/config")),
     });
     const progressReporter = new ProgressReporter();
     const gitService = new GitService();
@@ -128,7 +132,6 @@ export class Application {
     const dashboardKeyboard = new DashboardKeyboard();
     const projectHandler = new ProjectHandler(projectManager, undefined, storage, dashboardKeyboard);
     const answerHandler = new AnswerHandler(agentManager, projectHandler, progressReporter);
-    const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter);
     const gitHandler = new GitHandler(projectHandler, gitService);
     const statusHandler = new StatusHandler(projectHandler, agentManager, gitService);
     const diffHandler = new DiffHandler(projectHandler, gitService, new MessageSender());
@@ -141,7 +144,6 @@ export class Application {
     const stopHandler = new StopHandler(projectHandler, agentManager);
     const helpHandler = new HelpHandler();
     const logHandler = new LogHandler(projectHandler, taskManager);
-    const continueHandler = new ContinueHandler(agentManager, projectHandler, progressReporter);
     const confirmationHandler = new ConfirmationHandler(
       confirmationService,
       projectHandler,
@@ -152,12 +154,27 @@ export class Application {
       agentManager,
       confirmationHandler,
     );
-    const issueTrackerHandler = new IssueTrackerHandler(
-      projectHandler,
-      new IssueTrackerResolver(
+    const issueTrackerResolver = new IssueTrackerResolver(
         issueTrackerSecrets,
         (trackerConfig, token) => new GitHubIssueTracker(trackerConfig, token),
-      ),
+        (trackerConfig, token) => new GitHubIssueWriter(trackerConfig, token),
+      );
+    const issueWriters = new Map<string, import("../issues/IssueWriter.js").IssueWriter>();
+    for (const project of projectManager.list()) {
+      if (project.issueTracker?.type === "github" && project.issueTracker.allowCreation === true) {
+        issueWriters.set(project.id, issueTrackerResolver.resolveWriter(project));
+      }
+    }
+    const issueCreation = new IssueCreationHandler(
+      projectHandler,
+      confirmationHandler,
+      new IssueCreationService(issueWriters, issueTrackerSecrets.redactionValues()),
+    );
+    const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter, issueCreation);
+    const continueHandler = new ContinueHandler(agentManager, projectHandler, progressReporter, undefined, issueCreation);
+    const issueTrackerHandler = new IssueTrackerHandler(
+      projectHandler,
+      issueTrackerResolver,
     );
     const commandRouter = new CommandRouter(
       projectHandler,

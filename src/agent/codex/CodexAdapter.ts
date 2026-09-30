@@ -57,6 +57,8 @@ export interface CodexAdapterOptions {
   readonly client?: CodexClientPort;
   readonly environment?: NodeJS.ProcessEnv;
   readonly codexHome?: string;
+  /** Absolute files the agent process must not read. */
+  readonly protectedPaths?: readonly string[];
   readonly idFactory?: () => string;
   readonly clock?: () => Date;
   readonly onDiagnostic?: (diagnostic: CodexDiagnostic) => void;
@@ -93,6 +95,7 @@ export class CodexAdapter implements CodingAgent {
       options.client ??
       new SdkCodexClient(
         createCodexEnvironment(options.environment ?? process.env, options.codexHome),
+        options.protectedPaths ?? [],
       );
   }
 
@@ -334,8 +337,14 @@ async function nextOrAbort<T>(
 class SdkCodexClient implements CodexClientPort {
   readonly #client: Codex;
 
-  public constructor(environment: Readonly<Record<string, string>>) {
-    this.#client = new Codex({ env: { ...environment } });
+  public constructor(
+    environment: Readonly<Record<string, string>>,
+    protectedPaths: readonly string[],
+  ) {
+    this.#client = new Codex({
+      env: { ...environment },
+      configOverrides: [createFilesystemPolicy(protectedPaths)],
+    });
   }
 
   public startThread(options: SafeCodexThreadOptions): CodexThreadPort {
@@ -348,6 +357,17 @@ class SdkCodexClient implements CodexClientPort {
   ): CodexThreadPort {
     return this.#client.resumeThread(threadId, toSdkThreadOptions(options));
   }
+}
+
+function createFilesystemPolicy(protectedPaths: readonly string[]): string {
+  const entries = [
+    [":root", "read"],
+    ...protectedPaths.map((path) => [path, "deny"] as const),
+  ];
+  const filesystem = entries
+    .map(([path, permission]) => `${JSON.stringify(path)}=${JSON.stringify(permission)}`)
+    .join(",");
+  return `permissions.audit.filesystem={${filesystem}}`;
 }
 
 export function createCodexEnvironment(

@@ -102,7 +102,12 @@ export class ConfirmationHandler {
       }
     } catch (error) {
       if (!(error instanceof ConfirmationError)) throw error;
-      await context.answerCallbackQuery({ text: "This confirmation is no longer valid.", show_alert: true });
+      try {
+        await context.answerCallbackQuery({ text: "This confirmation is no longer valid.", show_alert: true });
+      } catch {
+        // A replayed callback can itself be stale at Telegram. The expected
+        // denial must remain silent in chat even if its acknowledgement fails.
+      }
     }
   }
 
