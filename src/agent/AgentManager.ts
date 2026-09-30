@@ -21,6 +21,7 @@ export interface AgentProjectRegistry {
 }
 
 export type AgentEventListener = (event: AgentEvent) => void | Promise<void>;
+export type AgentResolver = (projectId: string) => CodingAgent;
 
 export interface AgentSessionStore {
   getSession(projectId: string): Promise<AgentSession | undefined>;
@@ -104,7 +105,7 @@ type AgentSessionPatch = Partial<
 };
 
 export class AgentManager implements ProjectOperationCoordinator, ProjectOperationStopper {
-  readonly #agent: CodingAgent;
+  readonly #agent: AgentResolver;
   readonly #projects: AgentProjectRegistry;
   readonly #clock: () => Date;
   readonly #onEvent: AgentEventListener | undefined;
@@ -117,11 +118,11 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   #nextTransientTaskNumber = 1;
 
   public constructor(
-    agent: CodingAgent,
+    agent: CodingAgent | AgentResolver,
     projects: ProjectManager | AgentProjectRegistry,
     options: AgentManagerOptions = {},
   ) {
-    this.#agent = agent;
+    this.#agent = typeof agent === "function" ? agent : () => agent;
     this.#projects = projects;
     this.#clock = options.clock ?? (() => new Date());
     this.#onEvent = options.onEvent;
@@ -134,6 +135,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   /** Starts and consumes one complete agent turn. */
   public async startTask(projectId: string, prompt: string, userId?: number): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
+    const agent = this.#agent(projectId);
     if (this.#policy.evaluate(project, "task").kind === "forbidden") {
       throw new AgentManagerError(
         "TASK_NOT_ALLOWED",
@@ -163,12 +165,12 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       await this.#persistSession(session);
       const agentPrompt = prepareAgentPrompt(prompt);
       const run = prepared.threadId === undefined
-        ? await this.#agent.start({
+        ? await agent.start({
             projectId,
             workingDirectory: project.path,
             prompt: agentPrompt,
           })
-        : await this.#agent.resume({
+        : await agent.resume({
             projectId,
             workingDirectory: project.path,
             threadId: prepared.threadId,
@@ -184,7 +186,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
 
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
-      if (operation.stopRequested) await this.#agent.stop(run.runId);
+      if (operation.stopRequested) await agent.stop(run.runId);
       const terminalEvent = await this.#consumeEvents(
         session,
         run.runId,
@@ -304,6 +306,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   /** Requests cancellation for the active task or configured command. */
   public async stop(projectId: string): Promise<boolean> {
     this.#projects.require(projectId);
+    const agent = this.#agent(projectId);
     const operation = this.#activeOperations.get(projectId);
     if (operation === undefined) return false;
 
@@ -316,7 +319,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         this.#updateSnapshot(session, { state: session.machine.state });
         await this.#persistSession(session);
       }
-      if (operation.runId !== undefined) await this.#agent.stop(operation.runId);
+      if (operation.runId !== undefined) await agent.stop(operation.runId);
     }
     return true;
   }
@@ -324,6 +327,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   /** Sends an answer only to the pending question in the same project thread. */
   public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
+    const agent = this.#agent(projectId);
     if (this.#activeOperations.has(projectId)) {
       throw new AgentManagerError("OPERATION_ACTIVE", "An operation is already active for this project", projectId);
     }
@@ -348,7 +352,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       session.machine.transition("user_answered");
       this.#updateSnapshot(session, { state: session.machine.state, activeRunId: undefined, lastEvent: undefined, pendingQuestion: undefined });
       await this.#persistSession(session);
-      const run = await this.#agent.send({ projectId, workingDirectory: project.path, threadId, message: answer });
+      const run = await agent.send({ projectId, workingDirectory: project.path, threadId, message: answer });
       if (run.projectId !== projectId) throw new AgentManagerError("RUN_PROJECT_MISMATCH", "Coding agent returned a run for another project", projectId);
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });

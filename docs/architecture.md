@@ -327,7 +327,8 @@ persist-яться. Під час першого читання після resta
 - `danger-full-access` і bypass flags forbidden;
 - canonical repository path задає working directory;
 - SDK/CLI environment — allowlist;
-- рекомендований окремий gateway `CODEX_HOME` з mode `0700`;
+- global або project-specific `CODEX_HOME` з mode `0700`; project setting має
+  precedence над global default;
 - thread ID прив'язаний до project ID + canonical path fingerprint.
 
 ### Processes and Git

@@ -90,4 +90,20 @@ describe("GitHubIssueTracker endpoint allowlist", () => {
       next,
     ]);
   });
+
+  it("accepts Markdown newlines in an issue body while rejecting other controls", async () => {
+    const payload = issue(42);
+    payload.body = "## Context\n\nObserved behavior\n\nExpected behavior";
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(payload));
+    const tracker = new GitHubIssueTracker(config("https://api.github.com"), "secret", { fetch });
+
+    await expect(tracker.getIssue(createIssueReference("42"))).resolves.toMatchObject({
+      body: payload.body,
+    });
+
+    fetch.mockResolvedValue(response({ ...payload, body: "safe\u0000body" }));
+    await expect(tracker.getIssue(createIssueReference("42"))).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+    });
+  });
 });

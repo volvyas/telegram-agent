@@ -208,7 +208,7 @@ export class GitHubIssueTracker implements IssueTracker {
     const assignees = value.assignees === undefined || value.assignees === null ? [] : readValues(value.assignees, this.#config.limits.collectionItems, this.#config.limits.collectionValueCodePoints);
     const labels = value.labels === undefined || value.labels === null ? [] : readValues(value.labels, this.#config.limits.collectionItems, this.#config.limits.collectionValueCodePoints);
     const milestone = value.milestone === null || value.milestone === undefined ? undefined : boundedString(asRecord(value.milestone).title, this.#config.limits.collectionValueCodePoints);
-    const body = value.body === null || value.body === undefined ? undefined : boundedString(value.body, this.#config.limits.issueBodyCodePoints);
+    const body = value.body === null || value.body === undefined ? undefined : boundedMarkdown(value.body, this.#config.limits.issueBodyCodePoints);
     if (author === undefined && value.user !== null && value.user !== undefined || assignees === undefined || labels === undefined || milestone === undefined && value.milestone !== null && value.milestone !== undefined || body === undefined && value.body !== null && value.body !== undefined) {
       throw this.error("MALFORMED_RESPONSE", "GitHub returned an invalid issue");
     }
@@ -287,6 +287,14 @@ function boundedString(value: unknown, max: number): string | undefined {
   for (const character of value) {
     const code = character.codePointAt(0);
     if (code !== undefined && (code <= 0x1f || code === 0x7f)) return undefined;
+  }
+  return value;
+}
+function boundedMarkdown(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string" || [...value].length > max) return undefined;
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code !== undefined && ((code <= 0x1f && code !== 9 && code !== 10 && code !== 13) || code === 0x7f)) return undefined;
   }
   return value;
 }

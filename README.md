@@ -63,6 +63,8 @@ CODEX_HOME=/home/service-user/.local/share/codex-remote/codex-home
 `TELEGRAM_ALLOWED_USER_IDS` приймає один або кілька positive numeric IDs через
 кому. `PROJECTS_CONFIG` може бути relative до кореня checkout або absolute.
 `CODEX_HOME` має бути absolute і бажано окремим від interactive Codex profile.
+Окремий project може перевизначити profile у `projects.json` через absolute
+`codexHome`; якщо поле відсутнє, використовується цей global default.
 
 Підготуйте та автентифікуйте окремий Codex profile від імені service user:
 
@@ -87,6 +89,22 @@ cp projects.example.json projects.json
 Для кожного project задайте унікальний bounded ID, display name, absolute path
 до кореня Git repository та дозволені operations. Commands задаються тільки як
 окремі `executable` й `args`; shell strings, pipes і substitutions не потрібні.
+
+Опційно вкажіть project-specific Codex profile:
+
+```json
+{
+  "name": "Motor Backend",
+  "path": "/home/user/projects/motor-backend",
+  "codexHome": "/home/service-user/.local/share/codex-remote/motor-codex-home",
+  "allowedOperations": ["task", "status"]
+}
+```
+
+`codexHome` має бути absolute, належати service user і мати mode `0700`.
+Project без цього поля використовує global `CODEX_HOME`. Gateway створює окремий
+Codex client для кожного project profile; кожен profile потрібно окремо
+автентифікувати через `CODEX_HOME=... codex login`.
 
 ```json
 {

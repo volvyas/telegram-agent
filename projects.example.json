@@ -3,6 +3,7 @@
     "motor": {
       "name": "Motor Backend",
       "path": "/home/user/projects/motor-backend",
+      "codexHome": "/home/service-user/.local/share/codex-remote/motor-codex-home",
       "testCommand": {
         "executable": "./mvnw",
         "args": ["test"]

@@ -104,6 +104,7 @@ export class Application {
       secrets: [
         config.telegramBotToken,
         ...(config.codexHome === undefined ? [] : [config.codexHome]),
+        ...projectManager.list().flatMap((project) => project.codexHome === undefined ? [] : [project.codexHome]),
         ...issueTrackerSecrets.redactionValues(),
       ],
     });
@@ -116,14 +117,24 @@ export class Application {
     await taskManager.reconcileInterrupted();
     await confirmationService.expireExpired();
     const environment = { ...(options.environment ?? process.env) };
-    const adapter = new CodexAdapter({
-      environment,
-      ...(config.codexHome === undefined ? {} : { codexHome: config.codexHome }),
-      protectedPaths: projectManager.list().map((project) => resolve(project.path, ".git/config")),
-    });
+    const protectedPaths = projectManager.list().map((project) => resolve(project.path, ".git/config"));
+    const adapters = new Map(projectManager.list().map((project) => [
+      project.id,
+      new CodexAdapter({
+        environment,
+        ...(project.codexHome ?? config.codexHome) === undefined
+          ? {}
+          : { codexHome: project.codexHome ?? config.codexHome },
+        protectedPaths,
+      }),
+    ] as const));
     const progressReporter = new ProgressReporter();
     const gitService = new GitService();
-    const agentManager = new AgentManager(adapter, projectManager, {
+    const agentManager = new AgentManager((projectId) => {
+      const adapter = adapters.get(projectId);
+      if (adapter === undefined) throw new Error("No Codex adapter configured for project");
+      return adapter;
+    }, projectManager, {
       sessionStore: sessionManager,
       gitService,
       taskStore: taskManager,

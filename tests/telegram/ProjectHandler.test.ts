@@ -9,7 +9,7 @@ import { DashboardKeyboard } from "../../src/telegram/keyboards/DashboardKeyboar
 
 const projects = [
   project("api", "API service", "/private/repos/api"),
-  project("web", "Web app", "/private/repos/web"),
+  project("web", "Web app", "/private/repos/web", "/private/codex-profiles/web-codex"),
 ];
 
 describe("ProjectHandler", () => {
@@ -36,6 +36,7 @@ describe("ProjectHandler", () => {
     expect(handler.getActiveProject(42)?.id).toBe("api");
     expect(handler.getActiveProject(7)).toBeUndefined();
     expect(reply).toHaveBeenLastCalledWith(expect.stringContaining("Active project: API service"));
+    expect(JSON.stringify(reply.mock.calls)).not.toContain("/private/codex-profiles");
   });
 
   it("selects a project through a validated opaque callback", async () => {
@@ -54,6 +55,8 @@ describe("ProjectHandler", () => {
     expect(handler.getActiveProject(42)?.id).toBe("web");
     expect(answerCallbackQuery).toHaveBeenCalledOnce();
     expect(reply).toHaveBeenCalledWith(expect.stringContaining("Active project: Web app"));
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Codex: web-codex"));
+    expect(JSON.stringify(reply.mock.calls)).not.toContain("/private/codex-profiles/web-codex");
   });
 
   it("handles unknown command and callback project IDs without throwing", async () => {
@@ -98,7 +101,7 @@ describe("ProjectHandler", () => {
     const reply = vi.fn(() => Promise.resolve());
     const storage = {
       load: vi.fn(async () => ({
-        activeProjects: { "42": { projectId: "api", updatedAt: "2026-09-25T00:00:00.000Z" } },
+        activeProjects: { "42": { projectId: "web", updatedAt: "2026-09-25T00:00:00.000Z" } },
       })),
     } as never;
     const dashboard = new DashboardKeyboard();
@@ -107,9 +110,25 @@ describe("ProjectHandler", () => {
     await handler.handleStart(context({ userId: 42, reply }));
 
     const options = (reply.mock.calls[0] as unknown[] | undefined)?.[1] as { reply_markup?: unknown } | undefined;
-    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Active project: API service"), expect.objectContaining({ reply_markup: expect.anything() }));
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Active project: Web app"), expect.objectContaining({ reply_markup: expect.anything() }));
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Codex: web-codex"), expect.anything());
     expect(options?.reply_markup).toBeDefined();
-    expect(handler.getActiveProject(42)?.id).toBe("api");
+    expect(handler.getActiveProject(42)?.id).toBe("web");
+    expect(JSON.stringify(reply.mock.calls)).not.toContain("/private/codex-profiles/web-codex");
+  });
+
+  it("sanitizes the final Codex profile component", async () => {
+    const reply = vi.fn(() => Promise.resolve());
+    const unsafe = project("unsafe", "Unsafe profile", "/private/repos/unsafe", "/private/codex/\nprofile\tname/");
+    const handler = new ProjectHandler(projectManager([unsafe]));
+
+    await handler.handleProjectCommand(
+      context({ userId: 42, text: "/project unsafe", reply }),
+    );
+
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Codex: profilename"));
+    expect(JSON.stringify(reply.mock.calls)).not.toContain("/private/codex");
+    expect(JSON.stringify(reply.mock.calls)).not.toContain("profile\\tname");
   });
 });
 
@@ -132,11 +151,12 @@ function context(options: ContextOptions): Context {
   } as unknown as Context;
 }
 
-function project(id: string, name: string, path: string): ProjectConfig {
+function project(id: string, name: string, path: string, codexHome?: string): ProjectConfig {
   return Object.freeze({
     id,
     name,
     path,
+    ...(codexHome === undefined ? {} : { codexHome }),
     allowedOperations: new Set(["task", "test"] as const),
   });
 }

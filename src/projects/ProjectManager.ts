@@ -126,6 +126,7 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
   if (!isAbsolute(path)) {
     throw invalidProject(id, "Project path must be absolute");
   }
+  const codexHome = parseOptionalAbsolutePath(value.codexHome, id);
 
   const allowedOperations = parseAllowedOperations(value.allowedOperations, id);
   const testCommand = parseOptionalCommand(value.testCommand, id, "testCommand");
@@ -138,6 +139,7 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
     id,
     name,
     path,
+    ...(codexHome === undefined ? {} : { codexHome }),
     allowedOperations,
     ...(testCommand === undefined ? {} : { testCommand }),
     ...(buildCommand === undefined ? {} : { buildCommand }),
@@ -365,6 +367,15 @@ function parseOptionalString(
   return value === undefined
     ? undefined
     : readBoundedString(value, projectId, field, maxLength);
+}
+
+function parseOptionalAbsolutePath(value: unknown, projectId: string): string | undefined {
+  if (value === undefined) return undefined;
+  const path = readBoundedString(value, projectId, "codexHome", MAX_COMMAND_VALUE_LENGTH);
+  if (!isAbsolute(path)) {
+    throw invalidProject(projectId, "codexHome must be an absolute path");
+  }
+  return path;
 }
 
 function readBoundedString(

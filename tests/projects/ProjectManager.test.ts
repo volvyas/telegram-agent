@@ -32,6 +32,7 @@ describe("ProjectManager", () => {
         second: projectDocument("Second", second, ["task"]),
         first: {
           ...projectDocument("First", firstLink, ["task", "test"]),
+          codexHome: "/var/lib/codex-remote/profiles/first",
           testCommand: { executable: "./mvnw", args: ["test", "-q"] },
           branch: "main",
         },
@@ -40,6 +41,7 @@ describe("ProjectManager", () => {
 
     expect(manager.list().map((project) => project.id)).toEqual(["first", "second"]);
     expect(manager.require("first").path).toBe(first);
+    expect(manager.require("first").codexHome).toBe("/var/lib/codex-remote/profiles/first");
     expect(manager.require("first").testCommand).toEqual({
       executable: "./mvnw",
       args: ["test", "-q"],
@@ -100,6 +102,17 @@ describe("ProjectManager", () => {
           demo: {
             ...projectDocument("Demo", "/tmp", ["task"]),
             testCommand: "npm test",
+          },
+        },
+      },
+      "PROJECT_INVALID",
+    ],
+    [
+      {
+        projects: {
+          demo: {
+            ...projectDocument("Demo", "/tmp", ["task"]),
+            codexHome: "relative/codex-home",
           },
         },
       },

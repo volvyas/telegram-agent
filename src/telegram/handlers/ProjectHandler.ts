@@ -141,6 +141,23 @@ function formatDashboard(project: ProjectConfig): string {
   const operations = [...project.allowedOperations].join(", ");
   return [
     `Active project: ${project.name} (${project.id})`,
+    ...(project.codexHome === undefined ? [] : [`Codex: ${codexIdentifier(project.codexHome)}`]),
     `Available operations: ${operations}`,
   ].join("\n");
+}
+
+function codexIdentifier(codexHome: string): string {
+  const withoutTrailingSeparators = codexHome.replace(/[\\/]+$/u, "");
+  const separator = Math.max(
+    withoutTrailingSeparators.lastIndexOf("/"),
+    withoutTrailingSeparators.lastIndexOf("\\"),
+  );
+  const component = [...withoutTrailingSeparators.slice(separator + 1)]
+    .filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join("")
+    .trim();
+  return component.length === 0 ? "configured" : component.slice(0, 128);
 }

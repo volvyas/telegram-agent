@@ -43,7 +43,7 @@ application typed API. Це стабільніше для нашого TypeScrip
 | Web search | `webSearchMode` | `disabled` за замовчуванням |
 | Exit/failure | `turn.failed`, `error`, rejected iteration | typed failed result + diagnostic log |
 | Structured final output | `outputSchema` | completion/question envelope |
-| Session location | `~/.codex/sessions` або configured `CODEX_HOME` | persist лише thread ID у gateway storage |
+| Session location | `~/.codex/sessions`, global `CODEX_HOME` або project `codexHome` | persist лише thread ID у gateway storage; each project uses its resolved profile |
 
 Локальний smoke test додатково підтвердив JSONL streaming, thread ID, exit code
 `0` і resume конкретного session ID.
@@ -102,6 +102,14 @@ SDK отримує мінімально необхідний environment allowli
 рекомендовано окремий `CODEX_HOME`, щоб user-level MCP/config/rules не
 розширювали можливості gateway. Цей каталог не можна розміщувати у configured
 project або комітити; permissions мають бути `0700`.
+
+Gateway resolves the Codex profile per project: `project.codexHome` takes
+precedence over global `CODEX_HOME`; if neither is set, Codex's normal default
+profile is used. The application constructs a separate SDK client for each
+resolved project profile, so credentials, configuration and session storage do
+not cross project boundaries. A persisted thread must be resumed through the
+same project's client/profile; changing a project's profile requires a gateway
+restart and a new login for that profile.
 
 ## Streaming і progress
 

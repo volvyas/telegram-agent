@@ -23,6 +23,8 @@ export interface ProjectConfig {
   readonly id: string;
   readonly name: string;
   readonly path: string;
+  /** Optional project-specific Codex profile; otherwise the app default is used. */
+  readonly codexHome?: string;
   readonly allowedOperations: ReadonlySet<AllowedOperation>;
   readonly testCommand?: ProjectCommand;
   readonly buildCommand?: ProjectCommand;
