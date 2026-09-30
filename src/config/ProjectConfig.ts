@@ -1,3 +1,5 @@
+import type { IssueTrackerConfig } from "./IssueTrackerConfig.js";
+
 export const ALLOWED_OPERATIONS = [
   "task",
   "status",
@@ -26,6 +28,7 @@ export interface ProjectConfig {
   readonly buildCommand?: ProjectCommand;
   readonly runCommand?: ProjectCommand;
   readonly branch?: string;
+  readonly issueTracker?: IssueTrackerConfig;
 }
 
 export class ProjectConfigError extends Error {

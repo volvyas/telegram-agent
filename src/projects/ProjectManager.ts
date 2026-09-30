@@ -9,6 +9,14 @@ import {
   type ProjectConfig,
 } from "../config/ProjectConfig.js";
 import {
+  GITHUB_DEFAULT_API_BASE_URL,
+  GITHUB_DEFAULT_PAGE_SIZE,
+  GITHUB_ISSUE_TRACKER_LIMITS,
+  GITHUB_MAX_PAGE_SIZE,
+  type GitHubIssueTrackerConfig,
+  type IssueTrackerConfig,
+} from "../config/IssueTrackerConfig.js";
+import {
   allowEnvironment,
   ProcessRunner,
   type ProcessResult,
@@ -18,6 +26,11 @@ const PROJECT_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_PROJECT_NAME_LENGTH = 128;
 const MAX_COMMAND_ARGUMENTS = 128;
 const MAX_COMMAND_VALUE_LENGTH = 8_192;
+const GITHUB_OWNER_MAX_LENGTH = 100;
+const GITHUB_REPOSITORY_MAX_LENGTH = 100;
+const ENVIRONMENT_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/;
+const GITHUB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const API_VERSION_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export class ProjectManager {
   readonly #projects: ReadonlyMap<string, ProjectConfig>;
@@ -119,6 +132,7 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
   const buildCommand = parseOptionalCommand(value.buildCommand, id, "buildCommand");
   const runCommand = parseOptionalCommand(value.runCommand, id, "runCommand");
   const branch = parseOptionalString(value.branch, id, "branch", 255);
+  const issueTracker = parseOptionalIssueTracker(value.issueTracker, id);
 
   return {
     id,
@@ -129,7 +143,150 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
     ...(buildCommand === undefined ? {} : { buildCommand }),
     ...(runCommand === undefined ? {} : { runCommand }),
     ...(branch === undefined ? {} : { branch }),
+    ...(issueTracker === undefined ? {} : { issueTracker }),
   };
+}
+
+function parseOptionalIssueTracker(
+  value: unknown,
+  projectId: string,
+): IssueTrackerConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw invalidTracker(projectId, "issueTracker must be a discriminated object");
+  }
+
+  if (value.type === "jira") {
+    assertExactKeys(value, ["type"], projectId);
+    return Object.freeze({ type: "jira" });
+  }
+  if (value.type !== "github") {
+    throw new ProjectConfigError(
+      "ISSUE_TRACKER_PROVIDER_UNKNOWN",
+      "Issue tracker provider is not supported by configuration",
+      { projectId },
+    );
+  }
+
+  assertExactKeys(
+    value,
+    ["type", "owner", "repository", "tokenEnv", "apiBaseUrl", "apiVersion", "pageSize"],
+    projectId,
+  );
+  const owner = readGitHubName(value.owner, projectId, "owner", GITHUB_OWNER_MAX_LENGTH);
+  const repository = readGitHubName(
+    value.repository,
+    projectId,
+    "repository",
+    GITHUB_REPOSITORY_MAX_LENGTH,
+  );
+  const tokenEnv = readTrackerString(value.tokenEnv, projectId, "tokenEnv", 128);
+  if (!ENVIRONMENT_NAME_PATTERN.test(tokenEnv)) {
+    throw invalidTracker(projectId, "issueTracker.tokenEnv must be a bounded environment variable name");
+  }
+  const apiBaseUrl = parseGitHubApiBaseUrl(value.apiBaseUrl, projectId);
+  const apiVersion = readTrackerString(
+    value.apiVersion,
+    projectId,
+    "apiVersion",
+    10,
+  );
+  if (!isCalendarDate(apiVersion)) {
+    throw invalidTracker(projectId, "issueTracker.apiVersion must use YYYY-MM-DD format");
+  }
+  const pageSize = value.pageSize === undefined ? GITHUB_DEFAULT_PAGE_SIZE : value.pageSize;
+  if (typeof pageSize !== "number" || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > GITHUB_MAX_PAGE_SIZE) {
+    throw invalidTracker(projectId, `issueTracker.pageSize must be between 1 and ${GITHUB_MAX_PAGE_SIZE}`);
+  }
+
+  return Object.freeze({
+    type: "github",
+    owner,
+    repository,
+    tokenEnv,
+    apiBaseUrl,
+    apiVersion,
+    pageSize,
+    limits: GITHUB_ISSUE_TRACKER_LIMITS,
+  } satisfies GitHubIssueTrackerConfig);
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  projectId: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+    throw invalidTracker(projectId, "issueTracker contains an unknown provider setting");
+  }
+}
+
+function readGitHubName(
+  value: unknown,
+  projectId: string,
+  field: string,
+  maxLength: number,
+): string {
+  const name = readTrackerString(value, projectId, field, maxLength);
+  if (name === "." || name === ".." || !GITHUB_NAME_PATTERN.test(name)) {
+    throw invalidTracker(projectId, `issueTracker.${field} must be a valid GitHub name segment`);
+  }
+  return name;
+}
+
+function parseGitHubApiBaseUrl(value: unknown, projectId: string): string {
+  if (value === undefined) return GITHUB_DEFAULT_API_BASE_URL;
+  const configured = readTrackerString(value, projectId, "apiBaseUrl", 2_048);
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw invalidTracker(projectId, "issueTracker.apiBaseUrl must be an absolute HTTPS URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username.length > 0 ||
+    url.password.length > 0 ||
+    url.search.length > 0 ||
+    url.hash.length > 0
+  ) {
+    throw invalidTracker(projectId, "issueTracker.apiBaseUrl must be an absolute HTTPS URL without credentials, query or fragment");
+  }
+  const pathname = url.pathname.replace(/\/+$/u, "");
+  if (url.origin === GITHUB_DEFAULT_API_BASE_URL) {
+    if (pathname.length > 0) {
+      throw invalidTracker(projectId, "GitHub.com API base URL must be https://api.github.com");
+    }
+    return GITHUB_DEFAULT_API_BASE_URL;
+  }
+  if (pathname !== "/api/v3") {
+    throw invalidTracker(projectId, "GitHub Enterprise API base URL must end with /api/v3");
+  }
+  return `${url.origin}${pathname}`;
+}
+
+function readTrackerString(
+  value: unknown,
+  projectId: string,
+  field: string,
+  maxLength: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > maxLength ||
+    value.includes("\0")
+  ) {
+    throw invalidTracker(projectId, `issueTracker.${field} must be a non-empty bounded string`);
+  }
+  return value.trim();
+}
+
+function isCalendarDate(value: string): boolean {
+  if (!API_VERSION_PATTERN.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function parseAllowedOperations(value: unknown, projectId: string): ReadonlySet<AllowedOperation> {
@@ -291,4 +448,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function invalidProject(projectId: string, message: string): ProjectConfigError {
   return new ProjectConfigError("PROJECT_INVALID", message, { projectId });
+}
+
+function invalidTracker(projectId: string, message: string): ProjectConfigError {
+  return new ProjectConfigError("ISSUE_TRACKER_INVALID", message, { projectId });
 }

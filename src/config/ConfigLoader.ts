@@ -8,6 +8,8 @@ import {
   type AppConfig,
   type LogLevel,
 } from "./AppConfig.js";
+import { IssueTrackerSecrets } from "./IssueTrackerConfig.js";
+import type { ProjectConfig } from "./ProjectConfig.js";
 
 const DEFAULT_PROJECTS_CONFIG = "./projects.json";
 const DEFAULT_LOG_LEVEL: LogLevel = "info";
@@ -101,6 +103,26 @@ export class ConfigLoader {
         { cause: error, variableName: "PROJECTS_CONFIG" },
       );
     }
+  }
+
+  /** Resolves tracker credentials after project configuration has been validated. */
+  public loadIssueTrackerSecrets(
+    projects: readonly ProjectConfig[],
+  ): IssueTrackerSecrets {
+    const tokens = new Map<string, string>();
+    for (const project of projects) {
+      if (project.issueTracker?.type !== "github") continue;
+      const token = this.#environment[project.issueTracker.tokenEnv]?.trim();
+      if (token === undefined || token.length === 0) {
+        throw new ConfigError(
+          "ISSUE_TRACKER_CREDENTIAL_REQUIRED",
+          `Required issue tracker credential for project ${project.id} is missing`,
+          { variableName: project.issueTracker.tokenEnv },
+        );
+      }
+      tokens.set(project.id, token);
+    }
+    return new IssueTrackerSecrets(tokens);
   }
 }
 

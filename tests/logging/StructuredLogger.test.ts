@@ -42,4 +42,19 @@ describe("StructuredLogger", () => {
     expect(lines).toHaveLength(2);
     expect(lines.map((line) => JSON.parse(line).level)).toEqual(["warn", "error"]);
   });
+
+  it("redacts a configured issue tracker token in messages and nested fields", () => {
+    const lines: string[] = [];
+    const logger = new StructuredLogger({
+      secrets: ["github-read-token"],
+      sink: (line) => lines.push(line),
+    });
+
+    logger.error("GitHub request failed: github-read-token", {
+      response: { detail: "Bearer github-read-token" },
+    });
+
+    expect(lines.join("\n")).not.toContain("github-read-token");
+    expect(lines.join("\n")).toContain("[REDACTED]");
+  });
 });

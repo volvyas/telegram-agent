@@ -90,12 +90,17 @@ export class Application {
           })
         : new ConfigLoader(options.environment, options.cwd ?? process.cwd()));
     const config = configLoader.loadAppConfig();
-    const logger = new StructuredLogger({
-      level: config.logLevel,
-      secrets: [config.telegramBotToken, ...(config.codexHome === undefined ? [] : [config.codexHome])],
-    });
     const projectsDocument = await configLoader.loadProjectsDocument(config);
     const projectManager = await ProjectManager.fromDocument(projectsDocument);
+    const issueTrackerSecrets = configLoader.loadIssueTrackerSecrets(projectManager.list());
+    const logger = new StructuredLogger({
+      level: config.logLevel,
+      secrets: [
+        config.telegramBotToken,
+        ...(config.codexHome === undefined ? [] : [config.codexHome]),
+        ...issueTrackerSecrets.redactionValues(),
+      ],
+    });
     const dataDirectory = resolve(options.cwd ?? process.cwd(), "data");
     const storage = new JsonStorage(dataDirectory);
     const sessionManager = new SessionManager(storage, projectManager);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProjectConfigError } from "../../src/config/ProjectConfig.js";
+import { GITHUB_ISSUE_TRACKER_LIMITS } from "../../src/config/IssueTrackerConfig.js";
 import { ProcessRunner, allowEnvironment } from "../../src/process/ProcessRunner.js";
 import { ProjectManager } from "../../src/projects/ProjectManager.js";
 
@@ -116,6 +117,93 @@ describe("ProjectManager", () => {
 
     expect(() => manager.require("missing")).toThrow(ProjectConfigError);
     expect(() => manager.require("missing")).toThrow("Project is not configured");
+  });
+
+  it("loads disabled, GitHub and reserved Jira tracker configurations together", async () => {
+    const plain = await createGitRepository("plain");
+    const github = await createGitRepository("github");
+    const jira = await createGitRepository("jira");
+    const manager = await ProjectManager.fromDocument({
+      projects: {
+        plain: projectDocument("Plain", plain, ["task"]),
+        github: {
+          ...projectDocument("GitHub", github, ["task"]),
+          issueTracker: {
+            type: "github",
+            owner: "example-org",
+            repository: "service.api",
+            tokenEnv: "GITHUB_SERVICE_TOKEN",
+            apiVersion: "2026-03-10",
+          },
+        },
+        jira: {
+          ...projectDocument("Jira", jira, ["task"]),
+          issueTracker: { type: "jira" },
+        },
+      },
+    });
+
+    expect(manager.require("plain").issueTracker).toBeUndefined();
+    expect(manager.require("jira").issueTracker).toEqual({ type: "jira" });
+    expect(manager.require("github").issueTracker).toEqual({
+      type: "github",
+      owner: "example-org",
+      repository: "service.api",
+      tokenEnv: "GITHUB_SERVICE_TOKEN",
+      apiBaseUrl: "https://api.github.com",
+      apiVersion: "2026-03-10",
+      pageSize: 10,
+      limits: GITHUB_ISSUE_TRACKER_LIMITS,
+    });
+    expect(Object.isFrozen(manager.require("github").issueTracker)).toBe(true);
+    expect(Object.isFrozen(GITHUB_ISSUE_TRACKER_LIMITS)).toBe(true);
+  });
+
+  it("normalizes an explicit GitHub Enterprise API base URL", async () => {
+    const repository = await createGitRepository("ghes");
+    const manager = await ProjectManager.fromDocument({
+      projects: {
+        ghes: {
+          ...projectDocument("GHES", repository, ["task"]),
+          issueTracker: {
+            type: "github",
+            owner: "platform",
+            repository: "gateway",
+            tokenEnv: "GHES_ISSUES_TOKEN",
+            apiBaseUrl: "https://github.corp.example/api/v3/",
+            apiVersion: "2022-11-28",
+            pageSize: 50,
+          },
+        },
+      },
+    });
+
+    expect(manager.require("ghes").issueTracker).toMatchObject({
+      apiBaseUrl: "https://github.corp.example/api/v3",
+      pageSize: 50,
+    });
+  });
+
+  it.each([
+    [{}, "ISSUE_TRACKER_INVALID"],
+    [{ type: "gitlab" }, "ISSUE_TRACKER_PROVIDER_UNKNOWN"],
+    [{ type: "jira", baseUrl: "https://jira.example" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "TOKEN", apiVersion: "latest" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "TOKEN", apiVersion: "2026-02-30" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org/name", repository: "repo", tokenEnv: "TOKEN", apiVersion: "2026-03-10" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "lowercase", apiVersion: "2026-03-10" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "TOKEN", apiVersion: "2026-03-10", pageSize: 51 }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "TOKEN", apiVersion: "2026-03-10", apiBaseUrl: "http://github.example/api/v3" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "TOKEN", apiVersion: "2026-03-10", apiBaseUrl: "https://github.example/rest" }, "ISSUE_TRACKER_INVALID"],
+    [{ type: "github", owner: "org", repository: "repo", tokenEnv: "TOKEN", apiVersion: "2026-03-10", extra: true }, "ISSUE_TRACKER_INVALID"],
+  ])("rejects invalid issue tracker configuration safely", async (issueTracker, code) => {
+    const repository = await createGitRepository("invalid-tracker");
+    await expect(ProjectManager.fromDocument({
+      projects: {
+        demo: { ...projectDocument("Demo", repository, ["task"]), issueTracker },
+      },
+    })).rejects.toMatchObject({ code, projectId: "demo" });
   });
 });
 

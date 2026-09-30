@@ -107,6 +107,48 @@ cp projects.example.json projects.json
 Кожен path повинен існувати, бути canonical Git repository root і бути
 доступним service user. `projects.json`, `.env`, `data/` та logs ігноруються Git.
 
+### GitHub Issues token
+
+Для project з `issueTracker.type: "github"` створіть окремий
+[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+з мінімальним read-only доступом:
+
+1. У GitHub відкрийте **Settings → Developer settings → Personal access
+   tokens → Fine-grained tokens** і натисніть **Generate new token**.
+2. Вкажіть зрозумілу назву, короткий expiration і потрібного **Resource owner**.
+3. У **Repository access** виберіть **Only select repositories** та додайте лише
+   repository, вказаний у project configuration.
+4. У **Repository permissions** встановіть **Issues: Read-only**. Не надавайте
+   write permissions; `Metadata: Read-only` GitHub додає автоматично.
+5. Натисніть **Generate token** і одразу скопіюйте значення: повторно GitHub
+   його не покаже. Якщо organization вимагає approval, дочекайтеся схвалення
+   owner/admin — до цього token матиме статус `pending` і не дасть доступу до
+   private resources.
+6. Запишіть token лише в локальний `.env` під ім'ям із `tokenEnv` відповідного
+   project та залиште файл доступним тільки service user:
+
+```dotenv
+GITHUB_MOTOR_ISSUES_TOKEN=github_pat_replace_with_real_token
+```
+
+```json
+{
+  "issueTracker": {
+    "type": "github",
+    "owner": "example-org",
+    "repository": "motor-backend",
+    "tokenEnv": "GITHUB_MOTOR_ISSUES_TOKEN",
+    "apiVersion": "2026-03-10",
+    "pageSize": 10
+  }
+}
+```
+
+Не додавайте token до `projects.json`, Git remote URL, command arguments або
+systemd unit. Для різних owners/repositories можна використовувати окремі
+tokens і різні `tokenEnv`. Детальні правила створення та керування token:
+[GitHub documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
 ## Ручний запуск
 
 Development mode з автоматичним restart після змін:

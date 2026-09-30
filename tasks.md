@@ -848,7 +848,7 @@ extension point та sanitized fixtures у `docs/issue-tracker-integration.md`.
 Authenticated live probe перенесено в DEV-056, бо окремого least-privilege test
 token у environment немає.
 
-### [ ] DEV-050 — Додати project-scoped Bug Tracker configuration і secrets
+### [x] DEV-050 — Додати project-scoped Bug Tracker configuration і secrets
 
 **Залежить від:** DEV-049. **Types:** `IssueTrackerConfig`,
 `GitHubIssueTrackerConfig`, доповнення `ProjectConfig`/`ConfigLoader`.
@@ -867,7 +867,12 @@ GitHub config дає точну безпечну помилку; tests покр�
 mode, GitHub Enterprise URL і token redaction; `projects.example.json` та
 `.env.example` не містять credentials.
 
-### [ ] DEV-051 — Визначити provider-neutral domain contract і resolver
+**Виконано 2026-09-30:** додано immutable discriminated GitHub/Jira config,
+bounded provider limits, HTTPS/GHES та exact-key validation, окреме runtime-only
+environment credential store і автоматичну реєстрацію tracker tokens у logger
+redaction без потрапляння secrets у `ProjectConfig` або persistence.
+
+### [x] DEV-051 — Визначити provider-neutral domain contract і resolver
 
 **Залежить від:** DEV-049–050. **Types:** `IssueTracker`, `IssueDetails`,
 `IssuePage`, `IssueReference`, `PageToken`, typed errors. **Клас:**
@@ -882,6 +887,13 @@ Telegram types, generic request, search language чи write methods.
 **Готово, коли:** contract має fake implementation і contract tests; resolver
 повертає GitHub adapter, коректно обробляє відсутній/unsupported provider, а
 type/API не дозволяє create/update/comment/transition operations.
+
+**Виконано 2026-09-30:** додано read-only provider-neutral `IssueTracker` з
+normalized issue/page types, opaque page token, bounded reference factory,
+cancellation і safe typed errors; `IssueTrackerResolver` обирає GitHub adapter
+через factory та окремий credential store, а disabled/Jira/missing-secret paths
+повертають точні domain errors. Fake implementation проходить reusable contract
+tests, а compile-time surface містить лише lookup і assigned listing.
 
 ### [ ] DEV-052 — Реалізувати read-only `GitHubIssueTracker`
 
