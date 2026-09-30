@@ -1,5 +1,55 @@
 # Live acceptance
 
+## DEV-056 — GitHub read-only acceptance, 2026-09-30
+
+Статус: **PASS — DEV-063 виправлено й перевірено live**.
+
+Прогін виконано з configured fine-grained GitHub token і authorized Telegram
+session. Automated gates зелені. Контрольні прямі read-only GitHub probes
+підтвердили credential та API: `GET /user` і fixed assigned search повернули
+`200`, selected API version `2026-03-10`, search знайшов один assigned issue без
+next page. `GET` issue `#1` повернув GitHub pull request, тому цей reference не є
+придатним positive issue fixture. Жоден live probe не використовував write
+method або mutation endpoint.
+
+Після DEV-063 реальний `GitHubIssueTracker` успішно виконав authenticated user,
+assigned search і два direct lookups через GitHub.com root API base. Recorded
+transport evidence: чотири allowlisted `GET`, усі `200`; `3` і `#3` дали
+ідентичний normalized issue з коректно відсутніми optional fields. Telegram
+показав `/issue mine`, обидві форми positive lookup і safe disabled-state після
+switch на project без tracker. Для `1` і `#1` Telegram повернув `That reference
+is a pull request`, що є очікуваним defense-in-depth результатом для GitHub PR.
+
+### Підготовка без mutation
+
+1. Створити fine-grained token із мінімальним expiration, одним resource owner
+   і одним repository; надати лише `Issues: Read-only`.
+2. Додати token до локального `.env` під exact `tokenEnv` із `projects.json`;
+   не записувати його в acceptance log, command line, Git remote або fixtures.
+3. Налаштувати два projects із різними tracker configurations, включно з
+   project без tracker; для private repository перевірити тільки дозволений
+   read access.
+4. Запустити gateway з clean runtime state і authorized Telegram user.
+
+### Manual acceptance checklist
+
+| # | Check | Expected result | Status |
+|---:|---|---|---|
+| 1 | `/issue <number>` and `/issue #<number>` | Same normalized read-only issue from active configured repository | PASS — `3`/`#3` identical; `1`/`#1` consistently and correctly identified as pull request |
+| 2 | `/issue mine` | Fixed open assigned-to-authenticated-account query | PASS — one assigned issue shown in Telegram |
+| 3 | Empty assigned result | Safe empty-state message | N/A live — current account has one assigned issue; automated empty-result coverage passes |
+| 4 | Multiple assigned results | Stable bounded page with next/previous opaque buttons | N/A live — current dataset has one item; automated multi-item coverage passes |
+| 5 | Pagination | Only configured project/provider/user can use callback; stale/forged callback rejected | N/A live — GitHub returned no next link; pagination and callback-isolation tests pass |
+| 6 | Switch to second project | Repository, token/provider and results remain isolated | PASS — switch to `base-proto` returned tracker-not-configured instead of GitHub data |
+| 7 | Missing optional fields | Plain normalized output without `undefined`, HTML or raw JSON | PASS — live `#3` omitted three absent optional fields cleanly |
+| 8 | Private repository | Read succeeds only with scoped token; forbidden/not-found is generic | N/A — configured acceptance repository did not exercise a separate private-access scenario; permission/error mapping tests pass |
+| 9 | Unsupported Jira project | Safe unsupported-provider message; no request is made | N/A live — no Jira project configured; resolver/handler no-request tests pass |
+| 10 | GitHub state after run | No issue mutation, comment, label, assignment or other write observed | PASS — recorded live probes used only `GET` against `/user`, `/search/issues` and one issue endpoint |
+
+Automated DEV-056 gates on this checkout: `npm run typecheck`, `npm run lint`,
+`npm run build`, all 231 tests and all 6 focused security tests pass under the
+configured Node 24 runtime.
+
 ## DEV-048 — повторний прогін 2026-09-28
 
 Середовище: реальний Telegram на телефоні, реальний Codex, gateway на локальному

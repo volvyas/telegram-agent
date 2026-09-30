@@ -1,6 +1,6 @@
 # Security review and threat model
 
-Статус: reviewed for MVP, 2026-09-24. Цей документ описує локальний Telegram
+Статус: reviewed for MVP, 2026-09-30. Цей документ описує локальний Telegram
 gateway у поточній реалізації. Він не є обіцянкою ізоляції від користувача ОС,
 який уже має ті самі права доступу, що й service user.
 
@@ -40,6 +40,32 @@ service user і Node path, валідує їх та передає зовніш�
 | Runtime-state or temporary-output disclosure | data directory/state are forced to `0700`/`0600`; symlink storage endpoints and escaping filenames are rejected; upload directories/files use `0700`/`0600` and are removed in `finally` | `JsonStorage.test.ts`, `MessageSender.test.ts`, security suite |
 | Environment credential leakage | child processes receive explicit allowlists; Codex receives a bounded allowlist plus the configured `CODEX_HOME` only | `ProcessRunner.test.ts`, `CodexAdapter.test.ts` |
 | Unbounded output or abandoned child processes | captured output is bounded; timeouts/abort terminate the POSIX process group; Telegram output is chunked or sent as an ephemeral document | process and message-sender tests |
+| Issue-tracker SSRF, repository/query injection or mutation | GitHub adapter uses validated operator-owned origin/repository, HTTPS manual redirects, three fixed `GET` endpoint shapes, fixed `is:issue is:open assignee:<authenticated login>` search, exact pagination-link validation and bounded response/body limits | GitHub adapter transport/validation tests |
+| Issue-tracker credential, PII or cross-user page leakage | tokens are environment-only and never placed in URLs; provider errors are typed and generic at Telegram; assigned-page callbacks are random, short-lived and bound to Telegram user, project, provider and query kind | issue-handler callback isolation tests |
+
+## Issue-tracker trust boundary
+
+The issue tracker is an optional project-scoped capability. `projects.json` is
+operator-owned and supplies the only provider, API origin, owner, repository,
+API version and page size. Telegram input supplies only a bounded numeric issue
+reference or the literal command `mine`; it cannot select a provider, origin,
+repository, login, query, fields or HTTP method.
+
+The GitHub adapter has three allowlisted read paths: `/user`, the configured
+repository issue endpoint, and `/search/issues`. Every request is `GET`, uses
+the environment-only bearer token, follows no redirects, and requires the
+configured HTTPS origin. Assigned listing builds its query from the
+authenticated `/user` login and fixed qualifiers. Provider `Link` pagination
+URLs are revalidated for origin, path, fixed query, sort/order/page size and
+bounded pagination components before use.
+
+Response bodies and normalized fields are bounded. Pull requests are rejected
+at the issue endpoint and in search results; raw comments, events, attachments,
+HTML and mutation endpoints are not fetched. Body-read timeout and abort remain
+active after headers arrive, and only safe typed error codes cross the Telegram
+handler. Pagination tokens stay in process memory; callback data is opaque and
+its server-side record is short-lived, bounded, and checked against the current
+authorized user and active project on every callback.
 
 ## Repository policy
 

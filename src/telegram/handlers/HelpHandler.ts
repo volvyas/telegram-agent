@@ -4,6 +4,7 @@ const DEFAULT_COMMANDS = [
   "start", "projects", "project", "task", "answer", "status", "git",
   "diff", "test", "stop", "help", "log", "continue",
   "commit",
+  "issue",
 ] as const;
 
 export class HelpHandler {

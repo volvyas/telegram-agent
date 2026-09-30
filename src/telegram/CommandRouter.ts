@@ -14,6 +14,7 @@ import type { ContinueHandler } from "./handlers/ContinueHandler.js";
 import type { DashboardKeyboard } from "./keyboards/DashboardKeyboard.js";
 import type { ConfirmationHandler } from "./handlers/ConfirmationHandler.js";
 import type { CommitHandler } from "./handlers/CommitHandler.js";
+import type { IssueTrackerHandler } from "./handlers/IssueTrackerHandler.js";
 import { DEFAULT_OPERATION_POLICY } from "../policy/OperationPolicy.js";
 
 export class CommandRouter {
@@ -31,6 +32,7 @@ export class CommandRouter {
   readonly #dashboard: DashboardKeyboard | undefined;
   readonly #confirmationHandler: ConfirmationHandler | undefined;
   readonly #commitHandler: CommitHandler | undefined;
+  readonly #issueTrackerHandler: IssueTrackerHandler | undefined;
 
   public constructor(
     projectHandler: ProjectHandler,
@@ -47,6 +49,7 @@ export class CommandRouter {
     dashboard?: DashboardKeyboard,
     confirmationHandler?: ConfirmationHandler,
     commitHandler?: CommitHandler,
+    issueTrackerHandler?: IssueTrackerHandler,
   ) {
     this.#projectHandler = projectHandler;
     this.#taskHandler = taskHandler;
@@ -62,6 +65,7 @@ export class CommandRouter {
     this.#dashboard = dashboard;
     this.#confirmationHandler = confirmationHandler;
     this.#commitHandler = commitHandler;
+    this.#issueTrackerHandler = issueTrackerHandler;
   }
 
   public register(bot: Bot): void {
@@ -107,6 +111,13 @@ export class CommandRouter {
     if (this.#commitHandler !== undefined) {
       const commitHandler = this.#commitHandler;
       bot.command("commit", (context) => commitHandler.handleCommitCommand(context));
+    }
+    if (this.#issueTrackerHandler !== undefined) {
+      const issueTrackerHandler = this.#issueTrackerHandler;
+      bot.command("issue", (context) => issueTrackerHandler.handleIssueCommand(context));
+      bot.callbackQuery(/^issue-page:[A-Za-z0-9_-]{22,64}$/u, (context) =>
+        issueTrackerHandler.handleIssuePageCallback(context),
+      );
     }
     if (this.#helpHandler !== undefined) bot.command("help", (context) => this.#helpHandler?.handleHelpCommand(context));
     if (this.#logHandler !== undefined) bot.command("log", (context) => this.#logHandler?.handleLogCommand(context));

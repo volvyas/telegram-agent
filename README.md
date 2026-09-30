@@ -133,13 +133,14 @@ GITHUB_MOTOR_ISSUES_TOKEN=github_pat_replace_with_real_token
 
 ```json
 {
-  "issueTracker": {
-    "type": "github",
-    "owner": "example-org",
-    "repository": "motor-backend",
-    "tokenEnv": "GITHUB_MOTOR_ISSUES_TOKEN",
-    "apiVersion": "2026-03-10",
-    "pageSize": 10
+      "issueTracker": {
+        "type": "github",
+        "owner": "example-org",
+        "repository": "motor-backend",
+        "tokenEnv": "GITHUB_MOTOR_ISSUES_TOKEN",
+        "apiBaseUrl": "https://api.github.com",
+        "apiVersion": "2026-03-10",
+        "pageSize": 10
   }
 }
 ```
@@ -148,6 +149,12 @@ GITHUB_MOTOR_ISSUES_TOKEN=github_pat_replace_with_real_token
 systemd unit. Для різних owners/repositories можна використовувати окремі
 tokens і різні `tokenEnv`. Детальні правила створення та керування token:
 [GitHub documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
+Для GitHub Enterprise Server вкажіть API base у project configuration у формі
+`https://HOSTNAME/api/v3`. Origin, owner і repository належать operator-owned
+configuration; Telegram user не може їх змінити. `jira` можна вказати як
+зарезервований provider, але до появи Jira adapter він безпечно повертає
+повідомлення про непідтримуваний provider.
 
 ## Ручний запуск
 
@@ -239,11 +246,23 @@ sudo --preserve-env=PATH \
 - `/project <id>` — вибір active project;
 - `/task <text>` — запуск задачі;
 - `/task`, а потім наступне text message — двокроковий запуск задачі.
+- `/issue <number>` або `/issue #<number>` — read-only issue lookup активного
+  project;
+- `/issue mine` — bounded open issues, assigned authenticated GitHub account,
+  із opaque short-lived pagination buttons.
+
+Issue commands використовують тільки tracker активного project. Lookup не
+завантажує comments, events, attachments або HTML і не передає issue в agent
+session. Результати та response bodies не persist-яться. GitHub token живе
+лише в environment; у `projects.json` зберігається тільки ім'я environment
+змінної. Для tracker без credentials, private repository без дозволу,
+відсутнього issue або rate limit gateway показує безпечне узагальнене
+повідомлення.
 
 Другий active task для того самого project відхиляється; різні projects можуть
 працювати паралельно. Команди наступних фаз (`/status`, `/git`, `/diff`, `/test`,
-`/stop`, `/continue`, `/commit`) можуть бути присутні в project policy, але ще
-не зареєстровані у поточному Telegram router.
+`/stop`, `/continue`, `/commit`) працюють лише в межах active project і
+відповідно до project policy.
 
 ## IntelliJ IDEA та локальні зміни
 
@@ -297,6 +316,17 @@ Configured command не знайдено під systemd:
   executable доступний через PATH Node directory, `/usr/local/bin`, `/usr/bin`
   чи `/bin`;
 - після зміни Node path повторно виконайте service `install`.
+
+Issue tracker не відповідає або повертає access error:
+
+- перевірте, що `tokenEnv` існує в `.env` саме під назвою з project config;
+- переконайтеся, що fine-grained token має тільки `Issues: Read-only` для
+  потрібного repository та, якщо потрібно, organization approval;
+- для GHES перевірте `https://HOSTNAME/api/v3`, TLS certificate і доступність
+  instance з gateway host;
+- `jira` є зарезервованим provider і навмисно не працює в цій ітерації;
+- повторіть `/issue mine` після rate-limit reset; довільний search query або
+  чужий login не підтримуються.
 
 Після зміни checkout path або repository path service/session не стартує:
 

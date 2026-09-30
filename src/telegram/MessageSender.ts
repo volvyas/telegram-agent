@@ -20,6 +20,10 @@ export interface MessageTransport {
   ): Promise<void>;
 }
 
+export interface TextMessageTransport {
+  sendText(text: string): Promise<void>;
+}
+
 export interface MessageSenderOptions {
   readonly temporaryRoot?: string;
   readonly inlineDiffBytes?: number;
@@ -87,7 +91,7 @@ export class MessageSender {
 
   /** Sends bounded plain-text Telegram messages while keeping fenced blocks usable. */
   public async sendLongMessage(
-    transport: MessageTransport,
+    transport: TextMessageTransport,
     content: string,
   ): Promise<LongMessageDelivery> {
     if (content.length === 0) return Object.freeze({ kind: "empty" });
@@ -117,7 +121,7 @@ export class MessageSender {
     }
   }
 
-  async #sendText(transport: MessageTransport, text: string): Promise<void> {
+  async #sendText(transport: TextMessageTransport, text: string): Promise<void> {
     await withTelegramRetry(() => transport.sendText(text), this.#telegramRetry);
   }
 

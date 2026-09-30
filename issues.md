@@ -6,6 +6,38 @@ history are preserved under their original IDs.
 
 ## Live acceptance defects
 
+### [x] DEV-063 — Виправити GitHub.com endpoint allowlist для root API base
+
+**Виявлено під час DEV-056, 2026-09-30.** Configured GitHub.com base URL
+`https://api.github.com` має normalized pathname `/`. `GitHubIssueTracker`
+будує правильні request URLs `/user`, `/search/issues` і `/repos/...`, але
+allowlist додає до base pathname ще один slash та очікує `//user`,
+`//search/issues` і `//repos/...`. Через це adapter повертає
+`MALFORMED_RESPONSE` до виклику `fetch`; Telegram показує safe message
+`Issue tracker returned invalid response` для `/issue mine` і issue lookup.
+
+Контрольні прямі запити з тим самим read-only credential підтвердили `200` для
+`GET /user` і fixed assigned search, selected API version `2026-03-10` та один
+assigned issue. Issue `#1` у configured repository є pull request, тому live
+positive lookup після fix має використати номер реального issue. Усі виконані
+probes були `GET`; GitHub mutation не виконувалася.
+
+**Очікувана поведінка:** endpoint і pagination allowlists однаково коректно
+нормалізують GitHub.com root base та GHES `/api/v3`; дозволяють тільки три
+задані read-only endpoint shapes, не послаблюючи same-origin/path/query checks.
+
+**Готово, коли:** regression tests відтворюють root-path defect для `/user`,
+search, direct lookup і pagination; GHES coverage лишається green; повний
+DEV-056 Telegram recheck проходить lookup реального issue, assigned listing,
+empty/unavailable fields, switching/isolation і pagination за наявності.
+
+**Виконано і live перевірено 2026-09-30:** API base pathname нормалізується
+однаково для GitHub.com root і GHES prefix. Regression suite має 5 окремих
+GitHub.com root-path requests та зберігає GHES/security coverage. Adapter live
+виконав `/user`, assigned search і два lookup як allowlisted `GET` із `200`;
+Telegram успішно показав `/issue mine`, `3`/`#3`, коректний PR response для
+`1`/`#1` та ізольований disabled result після switch на project без tracker.
+
 ### [x] DEV-057 — Виправити UTF-8 encoding у `/diff`
 
 **Виявлено під час DEV-048, 2026-09-24.** У live Telegram flow `/diff` створив

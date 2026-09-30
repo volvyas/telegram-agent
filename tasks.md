@@ -895,7 +895,7 @@ cancellation і safe typed errors; `IssueTrackerResolver` обирає GitHub ad
 повертають точні domain errors. Fake implementation проходить reusable contract
 tests, а compile-time surface містить лише lookup і assigned listing.
 
-### [ ] DEV-052 — Реалізувати read-only `GitHubIssueTracker`
+### [x] DEV-052 — Реалізувати read-only `GitHubIssueTracker`
 
 **Залежить від:** DEV-050–051. **Клас:**
 `GitHubIssueTracker implements IssueTracker`.
@@ -912,7 +912,7 @@ GitHub Enterprise, auth/permission/not-found/rate-limit, timeout,
 malformed/oversized response та abort; adapter ніколи не використовує mutation
 endpoint або write HTTP method.
 
-### [ ] DEV-053 — Додати generic issue lookup у Telegram
+### [x] DEV-053 — Додати generic issue lookup у Telegram
 
 **Залежить від:** DEV-052. **Класи:** `IssueTrackerHandler`, `IssueFormatter`.
 
@@ -927,7 +927,7 @@ unsupported provider, valid/invalid reference, повні/відсутні по�
 oversized body, not-found/forbidden і Telegram-safe errors; user input не може
 змінити provider, origin, owner, repository або requested field set.
 
-### [ ] DEV-054 — Додати generic список issues `assigned to me`
+### [x] DEV-054 — Додати generic список issues `assigned to me`
 
 **Залежить від:** DEV-052–053.
 
@@ -941,7 +941,7 @@ oversized body, not-found/forbidden і Telegram-safe errors; user input не м�
 stale/forged/wrong-user/wrong-project callback, max-page cap і stable formatting;
 Telegram data не може розширити assigned-to-me query.
 
-### [ ] DEV-055 — Security, resilience і provider-isolation review
+### [x] DEV-055 — Security, resilience і provider-isolation review
 
 **Залежить від:** DEV-053–054.
 
@@ -956,7 +956,7 @@ cross-origin request, arbitrary repository/search query або credential leakag
 project A не може прочитати tracker project B; fault injection не залишає
 pending pagination state чи uncaught errors.
 
-### [ ] DEV-056 — GitHub documentation і live read-only acceptance
+### [x] DEV-056 — GitHub documentation і live read-only acceptance
 
 **Залежить від:** DEV-055.
 
@@ -969,6 +969,23 @@ switching, empty result, unavailable field і pagination.
 **Готово, коли:** build/test/security suites зелені; acceptance не змінює
 GitHub data; два projects із різною tracker configuration ізольовані; результати
 записані в `docs/acceptance.md`, а всі відхилення мають окремі tasks.
+
+**Документацію оновлено 2026-09-30:** README та acceptance checklist описують
+GitHub.com/Enterprise setup, least-privilege token, generic commands, limits,
+data handling і troubleshooting. Live acceptance позначено `NOT RUN`, бо в
+environment немає opt-in read-only test token та authorized Telegram session.
+
+**Live прогін 2026-09-30:** credential і direct read-only GitHub probes пройшли,
+усі automated gates зелені, але adapter-level і Telegram lookup/listing
+заблоковані помилкою GitHub.com base-path allowlist. Відхилення оформлено як
+DEV-063; DEV-056 залишається відкритою до fix і повного повторного прогону.
+
+**Виконано 2026-09-30 після DEV-063:** adapter і Telegram live recheck пройшли
+assigned listing, equivalent numeric/hash lookup, PR rejection, absent optional
+fields та switch/isolation з project без tracker. Усі live HTTP requests були
+allowlisted `GET`; mutation не виконувалася. Поточний dataset не мав empty,
+multi-page, private або Jira сценаріїв, тому їх позначено N/A live та підтверджено
+відповідними automated/security tests. Build, 231 tests і 6 security tests зелені.
 
 ---
 

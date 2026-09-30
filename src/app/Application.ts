@@ -30,6 +30,9 @@ import { ConfirmationService } from "../confirmations/ConfirmationService.js";
 import { ConfirmationHandler } from "../telegram/handlers/ConfirmationHandler.js";
 import { CommitHandler } from "../telegram/handlers/CommitHandler.js";
 import { StructuredLogger } from "../logging/StructuredLogger.js";
+import { IssueTrackerResolver } from "../issues/IssueTrackerResolver.js";
+import { GitHubIssueTracker } from "../issues/GitHubIssueTracker.js";
+import { IssueTrackerHandler } from "../telegram/handlers/IssueTrackerHandler.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -149,6 +152,13 @@ export class Application {
       agentManager,
       confirmationHandler,
     );
+    const issueTrackerHandler = new IssueTrackerHandler(
+      projectHandler,
+      new IssueTrackerResolver(
+        issueTrackerSecrets,
+        (trackerConfig, token) => new GitHubIssueTracker(trackerConfig, token),
+      ),
+    );
     const commandRouter = new CommandRouter(
       projectHandler,
       taskHandler,
@@ -164,6 +174,7 @@ export class Application {
       dashboardKeyboard,
       confirmationHandler,
       commitHandler,
+      issueTrackerHandler,
     );
     const bot = new TelegramBot({
       token: config.telegramBotToken,
