@@ -226,7 +226,14 @@ class BoundedOutput {
       return;
     }
 
-    this.#parts.push(Buffer.from(value).subarray(0, remaining).toString("utf8"));
+    const encoded = Buffer.from(value);
+    let safeEnd = remaining;
+    while (safeEnd > 0 && (encoded[safeEnd] ?? 0) >= 0x80 && (encoded[safeEnd] ?? 0) < 0xc0) {
+      safeEnd -= 1;
+    }
+    if (safeEnd > 0) {
+      this.#parts.push(encoded.subarray(0, safeEnd).toString("utf8"));
+    }
     this.#storedBytes = this.#maxBytes;
     this.#truncated = true;
   }

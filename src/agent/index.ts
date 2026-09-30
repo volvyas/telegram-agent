@@ -5,6 +5,7 @@ export type {
   AgentEvent,
   AgentEventBase,
   AgentFilesChangedEvent,
+  AgentIssueProposalEvent,
   AgentProgressEvent,
   AgentQuestionEvent,
   AgentRunId,
@@ -17,6 +18,8 @@ export type {
 } from "./AgentEvent.js";
 export type { AgentRun } from "./AgentRun.js";
 export type { AgentSession } from "../domain/AgentSession.js";
+export type { GitSnapshot, GitTaskComparison, GitTaskSnapshot } from "../domain/GitSnapshot.js";
+export type { TaskGitSummary, TaskRecord, TaskStatus, TaskTestSummary } from "../domain/TaskRecord.js";
 export {
   AgentManager,
   AgentManagerError,
@@ -25,7 +28,10 @@ export type {
   AgentEventListener,
   AgentManagerOptions,
   AgentProjectRegistry,
+  ProjectOperationCoordinator,
+  ProjectOperationStopper,
   AgentStatus,
+  GitStatusReader,
 } from "./AgentManager.js";
 export {
   AGENT_STATES,

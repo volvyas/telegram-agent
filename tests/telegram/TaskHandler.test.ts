@@ -9,6 +9,7 @@ import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 import type { ProjectManager } from "../../src/projects/ProjectManager.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
 import { TaskHandler } from "../../src/telegram/handlers/TaskHandler.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 
 describe("TaskHandler", () => {
   it("does not start a task without an active project", async () => {
@@ -79,7 +80,10 @@ function createHandler(outcome: "completed" | "error" = "completed") {
   const agent = new FakeAgent(outcome);
   const manager = projectManager();
   const projects = new ProjectHandler(manager);
-  const handler = new TaskHandler(new AgentManager(agent, manager), projects);
+  const handler = new TaskHandler(
+    new AgentManager(agent, manager, { gitService: CLEAN_GIT_STATUS_READER }),
+    projects,
+  );
   return { agent, handler, projects };
 }
 

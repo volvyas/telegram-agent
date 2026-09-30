@@ -11,6 +11,31 @@ import { CommandRouter } from "../telegram/CommandRouter.js";
 import { TelegramBot } from "../telegram/TelegramBot.js";
 import { ProjectHandler } from "../telegram/handlers/ProjectHandler.js";
 import { TaskHandler } from "../telegram/handlers/TaskHandler.js";
+import { AnswerHandler } from "../telegram/handlers/AnswerHandler.js";
+import { ProgressReporter } from "../telegram/ProgressReporter.js";
+import { GitService } from "../git/GitService.js";
+import { GitHandler } from "../telegram/handlers/GitHandler.js";
+import { StatusHandler } from "../telegram/handlers/StatusHandler.js";
+import { DiffHandler } from "../telegram/handlers/DiffHandler.js";
+import { MessageSender } from "../telegram/MessageSender.js";
+import { ProjectCommandRunner } from "../process/ProjectCommandRunner.js";
+import { TestHandler } from "../telegram/handlers/TestHandler.js";
+import { StopHandler } from "../telegram/handlers/StopHandler.js";
+import { HelpHandler } from "../telegram/handlers/HelpHandler.js";
+import { LogHandler } from "../telegram/handlers/LogHandler.js";
+import { ContinueHandler } from "../telegram/handlers/ContinueHandler.js";
+import { DashboardKeyboard } from "../telegram/keyboards/DashboardKeyboard.js";
+import { TaskManager } from "../tasks/TaskManager.js";
+import { ConfirmationService } from "../confirmations/ConfirmationService.js";
+import { ConfirmationHandler } from "../telegram/handlers/ConfirmationHandler.js";
+import { CommitHandler } from "../telegram/handlers/CommitHandler.js";
+import { StructuredLogger } from "../logging/StructuredLogger.js";
+import { IssueTrackerResolver } from "../issues/IssueTrackerResolver.js";
+import { GitHubIssueTracker } from "../issues/GitHubIssueTracker.js";
+import { IssueTrackerHandler } from "../telegram/handlers/IssueTrackerHandler.js";
+import { GitHubIssueWriter } from "../issues/GitHubIssueWriter.js";
+import { IssueCreationService } from "../issues/IssueCreationService.js";
+import { IssueCreationHandler } from "../telegram/handlers/IssueCreationHandler.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -73,25 +98,117 @@ export class Application {
     const config = configLoader.loadAppConfig();
     const projectsDocument = await configLoader.loadProjectsDocument(config);
     const projectManager = await ProjectManager.fromDocument(projectsDocument);
+    const issueTrackerSecrets = configLoader.loadIssueTrackerSecrets(projectManager.list());
+    const logger = new StructuredLogger({
+      level: config.logLevel,
+      secrets: [
+        config.telegramBotToken,
+        ...(config.codexHome === undefined ? [] : [config.codexHome]),
+        ...projectManager.list().flatMap((project) => project.codexHome === undefined ? [] : [project.codexHome]),
+        ...issueTrackerSecrets.redactionValues(),
+      ],
+    });
     const dataDirectory = resolve(options.cwd ?? process.cwd(), "data");
     const storage = new JsonStorage(dataDirectory);
     const sessionManager = new SessionManager(storage, projectManager);
+    const taskManager = new TaskManager(storage);
+    const confirmationService = new ConfirmationService(storage);
+    await sessionManager.reconcileInterrupted();
+    await taskManager.reconcileInterrupted();
+    await confirmationService.expireExpired();
     const environment = { ...(options.environment ?? process.env) };
-    const adapter = new CodexAdapter({
-      environment,
-      ...(config.codexHome === undefined ? {} : { codexHome: config.codexHome }),
-    });
-    const agentManager = new AgentManager(adapter, projectManager, {
+    const protectedPaths = projectManager.list().map((project) => resolve(project.path, ".git/config"));
+    const adapters = new Map(projectManager.list().map((project) => [
+      project.id,
+      new CodexAdapter({
+        environment,
+        ...(project.codexHome ?? config.codexHome) === undefined
+          ? {}
+          : { codexHome: project.codexHome ?? config.codexHome },
+        protectedPaths,
+      }),
+    ] as const));
+    const progressReporter = new ProgressReporter();
+    const gitService = new GitService();
+    const agentManager = new AgentManager((projectId) => {
+      const adapter = adapters.get(projectId);
+      if (adapter === undefined) throw new Error("No Codex adapter configured for project");
+      return adapter;
+    }, projectManager, {
       sessionStore: sessionManager,
+      gitService,
+      taskStore: taskManager,
+      onEvent: (event) => progressReporter.onEvent(event),
     });
-    const projectHandler = new ProjectHandler(projectManager);
-    const taskHandler = new TaskHandler(agentManager, projectHandler);
-    const commandRouter = new CommandRouter(projectHandler, taskHandler);
+    const dashboardKeyboard = new DashboardKeyboard();
+    const projectHandler = new ProjectHandler(projectManager, undefined, storage, dashboardKeyboard);
+    const answerHandler = new AnswerHandler(agentManager, projectHandler, progressReporter);
+    const gitHandler = new GitHandler(projectHandler, gitService);
+    const statusHandler = new StatusHandler(projectHandler, agentManager, gitService);
+    const diffHandler = new DiffHandler(projectHandler, gitService, new MessageSender());
+    const testHandler = new TestHandler(
+      projectHandler,
+      new ProjectCommandRunner(),
+      agentManager,
+      new MessageSender(),
+    );
+    const stopHandler = new StopHandler(projectHandler, agentManager);
+    const helpHandler = new HelpHandler();
+    const logHandler = new LogHandler(projectHandler, taskManager);
+    const confirmationHandler = new ConfirmationHandler(
+      confirmationService,
+      projectHandler,
+    );
+    const commitHandler = new CommitHandler(
+      projectHandler,
+      gitService,
+      agentManager,
+      confirmationHandler,
+    );
+    const issueTrackerResolver = new IssueTrackerResolver(
+        issueTrackerSecrets,
+        (trackerConfig, token) => new GitHubIssueTracker(trackerConfig, token),
+        (trackerConfig, token) => new GitHubIssueWriter(trackerConfig, token),
+      );
+    const issueWriters = new Map<string, import("../issues/IssueWriter.js").IssueWriter>();
+    for (const project of projectManager.list()) {
+      if (project.issueTracker?.type === "github" && project.issueTracker.allowCreation === true) {
+        issueWriters.set(project.id, issueTrackerResolver.resolveWriter(project));
+      }
+    }
+    const issueCreation = new IssueCreationHandler(
+      projectHandler,
+      confirmationHandler,
+      new IssueCreationService(issueWriters, issueTrackerSecrets.redactionValues()),
+    );
+    const taskHandler = new TaskHandler(agentManager, projectHandler, answerHandler, progressReporter, issueCreation);
+    const continueHandler = new ContinueHandler(agentManager, projectHandler, progressReporter, undefined, issueCreation);
+    const issueTrackerHandler = new IssueTrackerHandler(
+      projectHandler,
+      issueTrackerResolver,
+    );
+    const commandRouter = new CommandRouter(
+      projectHandler,
+      taskHandler,
+      answerHandler,
+      gitHandler,
+      statusHandler,
+      diffHandler,
+      testHandler,
+      stopHandler,
+      helpHandler,
+      logHandler,
+      continueHandler,
+      dashboardKeyboard,
+      confirmationHandler,
+      commitHandler,
+      issueTrackerHandler,
+    );
     const bot = new TelegramBot({
       token: config.telegramBotToken,
       authGuard: new AuthGuard(config.telegramAllowedUserIds),
       commandRouter,
-      logger: console,
+      logger,
     });
 
     return new Application({

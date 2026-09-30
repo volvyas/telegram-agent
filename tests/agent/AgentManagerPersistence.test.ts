@@ -18,6 +18,7 @@ import type {
 import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 import { SessionManager } from "../../src/sessions/SessionManager.js";
 import { JsonStorage } from "../../src/storage/JsonStorage.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 
 const occurredAt = "2026-09-15T14:00:00.000Z";
 const temporaryDirectories: string[] = [];
@@ -125,6 +126,7 @@ function manager(
 ): AgentManager {
   return new AgentManager(agent, projects, {
     clock: () => new Date(occurredAt),
+    gitService: CLEAN_GIT_STATUS_READER,
     sessionStore: new SessionManager(storage, projects),
   });
 }

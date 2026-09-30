@@ -9,8 +9,14 @@ import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 import type { ProjectManager } from "../../src/projects/ProjectManager.js";
 import { AuthGuard } from "../../src/telegram/AuthGuard.js";
 import { CommandRouter } from "../../src/telegram/CommandRouter.js";
+import type { AnswerHandler } from "../../src/telegram/handlers/AnswerHandler.js";
+import type { GitHandler } from "../../src/telegram/handlers/GitHandler.js";
 import { ProjectHandler } from "../../src/telegram/handlers/ProjectHandler.js";
+import type { StatusHandler } from "../../src/telegram/handlers/StatusHandler.js";
+import type { DiffHandler } from "../../src/telegram/handlers/DiffHandler.js";
 import { TaskHandler } from "../../src/telegram/handlers/TaskHandler.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
+import { ProjectKeyboard } from "../../src/telegram/keyboards/ProjectKeyboard.js";
 import { TelegramBot } from "../../src/telegram/TelegramBot.js";
 
 const BOT_INFO: UserFromGetMe = {
@@ -47,25 +53,30 @@ describe("TelegramBot", () => {
     const projectHandler = new ProjectHandler(projectManager());
     vi.spyOn(projectHandler, "handleStart").mockRejectedValue(new Error(token));
     const logger = { error: vi.fn() };
+    const messages: string[] = [];
     const bot = new TelegramBot({
       token,
       authGuard: new AuthGuard(new Set([42])),
       commandRouter: new CommandRouter(projectHandler),
-      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+      botConfig: { botInfo: BOT_INFO, client: { fetch: recordingFetch(messages) } },
       logger,
     });
 
     await bot.handleUpdate(commandUpdate(42, "/start"));
 
-    expect(logger.error).toHaveBeenCalledWith("Telegram update handling failed.");
+    expect(logger.error).toHaveBeenCalledWith(expect.stringMatching(/^Telegram update handling failed Reference: ERR-/u), expect.objectContaining({ diagnosticId: expect.stringMatching(/^ERR-/u) }));
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(token);
+    expect(messages[0]).toMatch(/^Unable to process this request\. Reference: ERR-/u);
   });
 
   it("runs the mocked project-selection to task-result flow end to end", async () => {
     const manager = projectManager();
     const projectHandler = new ProjectHandler(manager);
     const agent = new CompletingAgent();
-    const taskHandler = new TaskHandler(new AgentManager(agent, manager), projectHandler);
+    const taskHandler = new TaskHandler(
+      new AgentManager(agent, manager, { gitService: CLEAN_GIT_STATUS_READER }),
+      projectHandler,
+    );
     const sentMessages: string[] = [];
     const bot = new TelegramBot({
       token: "123456:test-token",
@@ -87,6 +98,86 @@ describe("TelegramBot", () => {
     });
     expect(sentMessages).toContain("Task started for API.");
     expect(sentMessages).toContain("Task completed.\nAll done");
+  });
+
+  it("routes project callbacks separately from answer callbacks", async () => {
+    const keyboard = new ProjectKeyboard();
+    const projectHandler = new ProjectHandler(projectManager(), keyboard);
+    const answerHandler = {
+      handleAnswerCommand: vi.fn(),
+      handleText: vi.fn(() => Promise.resolve()),
+      handleCallback: vi.fn(() => Promise.resolve()),
+    } as unknown as AnswerHandler;
+    const bot = new TelegramBot({
+      token: "123456:test-token",
+      authGuard: new AuthGuard(new Set([42])),
+      commandRouter: new CommandRouter(projectHandler, undefined, answerHandler),
+      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+    });
+
+    await bot.handleUpdate(callbackUpdate(42, keyboard.callbackData("api")));
+
+    expect(projectHandler.getActiveProject(42)?.id).toBe("api");
+    expect(answerHandler.handleCallback).not.toHaveBeenCalled();
+  });
+
+  it("routes /git, /status and /diff to their dedicated handlers", async () => {
+    const projectHandler = new ProjectHandler(projectManager());
+    const gitHandler = {
+      handleGitCommand: vi.fn(() => Promise.resolve()),
+    } as unknown as GitHandler;
+    const statusHandler = {
+      handleStatusCommand: vi.fn(() => Promise.resolve()),
+    } as unknown as StatusHandler;
+    const diffHandler = {
+      handleDiffCommand: vi.fn(() => Promise.resolve()),
+    } as unknown as DiffHandler;
+    const bot = new TelegramBot({
+      token: "123456:test-token",
+      authGuard: new AuthGuard(new Set([42])),
+      commandRouter: new CommandRouter(
+        projectHandler,
+        undefined,
+        undefined,
+        gitHandler,
+        statusHandler,
+        diffHandler,
+      ),
+      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+    });
+
+    await bot.handleUpdate(commandUpdate(42, "/git"));
+    await bot.handleUpdate(commandUpdate(42, "/status"));
+    await bot.handleUpdate(commandUpdate(42, "/diff"));
+
+    expect(gitHandler.handleGitCommand).toHaveBeenCalledOnce();
+    expect(statusHandler.handleStatusCommand).toHaveBeenCalledOnce();
+    expect(diffHandler.handleDiffCommand).toHaveBeenCalledOnce();
+  });
+
+  it("does not route slash commands through the generic text handlers", async () => {
+    const projectHandler = new ProjectHandler(projectManager());
+    const taskHandler = {
+      handleTaskCommand: vi.fn(() => Promise.resolve()),
+      handleText: vi.fn(() => Promise.resolve(false)),
+    } as unknown as TaskHandler;
+    const answerHandler = {
+      handleAnswerCommand: vi.fn(() => Promise.resolve()),
+      handleText: vi.fn(() => Promise.resolve()),
+      handleCallback: vi.fn(() => Promise.resolve()),
+    } as unknown as AnswerHandler;
+    const bot = new TelegramBot({
+      token: "123456:test-token",
+      authGuard: new AuthGuard(new Set([42])),
+      commandRouter: new CommandRouter(projectHandler, taskHandler, answerHandler),
+      botConfig: { botInfo: BOT_INFO, client: { fetch: fakeFetch([]) } },
+    });
+
+    await bot.handleUpdate(commandUpdate(42, "/task"));
+
+    expect(taskHandler.handleTaskCommand).toHaveBeenCalledOnce();
+    expect(taskHandler.handleText).not.toHaveBeenCalled();
+    expect(answerHandler.handleText).not.toHaveBeenCalled();
   });
 });
 
@@ -182,6 +273,19 @@ function commandUpdate(userId: number, text: string): Update {
       ...telegramMessage(text),
       from: { id: userId, is_bot: false, first_name: "User" },
       entities: [{ type: "bot_command", offset: 0, length: commandLength(text) }],
+    },
+  };
+}
+
+function callbackUpdate(userId: number, data: string): Update {
+  return {
+    update_id: 1,
+    callback_query: {
+      id: "callback-1",
+      chat_instance: "chat-1",
+      from: { id: userId, is_bot: false, first_name: "User" },
+      data,
+      message: telegramMessage("Projects"),
     },
   };
 }

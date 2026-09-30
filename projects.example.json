@@ -3,6 +3,7 @@
     "motor": {
       "name": "Motor Backend",
       "path": "/home/user/projects/motor-backend",
+      "codexHome": "/home/service-user/.local/share/codex-remote/motor-codex-home",
       "testCommand": {
         "executable": "./mvnw",
         "args": ["test"]
@@ -10,6 +11,14 @@
       "buildCommand": {
         "executable": "./mvnw",
         "args": ["package", "-DskipTests"]
+      },
+      "issueTracker": {
+        "type": "github",
+        "owner": "example-org",
+        "repository": "motor-backend",
+        "tokenEnv": "GITHUB_MOTOR_ISSUES_TOKEN",
+        "apiVersion": "2026-03-10",
+        "pageSize": 10
       },
       "branch": "main",
       "allowedOperations": ["task", "status", "git", "diff", "test", "build", "stop", "commit"]
@@ -22,6 +31,14 @@
         "args": ["test"]
       },
       "allowedOperations": ["task", "status", "git", "diff", "test", "stop"]
+    },
+    "legacy": {
+      "name": "Legacy Service",
+      "path": "/home/user/projects/legacy-service",
+      "allowedOperations": ["task", "status", "stop"],
+      "issueTracker": {
+        "type": "jira"
+      }
     }
   }
 }

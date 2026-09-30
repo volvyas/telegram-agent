@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { ThreadEvent } from "@openai/codex-sdk";
 
 import type {
   AgentCommandEvent,
   AgentEvent,
   AgentEventBase,
+  AgentIssueProposalEvent,
 } from "../AgentEvent.js";
 
 const MAX_DIAGNOSTICS = 20;
@@ -56,13 +58,20 @@ export class CodexEventMapper {
         return this.#mapThreadStarted(event);
       case "turn.started":
         return [this.#event({ type: "run_started" })];
-      case "turn.completed":
+      case "turn.completed": {
+        const proposal = decodeIssueProposal(this.#lastAgentMessage);
+        if (proposal !== undefined) return [this.#event({ type: "issue_proposal", proposal: { ...proposal, projectId: this.#projectId } })];
+        const question = decodeQuestionOutcome(this.#lastAgentMessage);
+        if (question !== undefined) {
+          return [this.#event({ type: "question", ...question })];
+        }
         return [
           this.#event({
             type: "completed",
             summary: this.#lastAgentMessage ?? "Codex turn completed.",
           }),
         ];
+      }
       case "turn.failed":
         return [
           this.#event({
@@ -145,6 +154,10 @@ export class CodexEventMapper {
 
     const message = boundedString(item.text, "Codex produced an empty response", MAX_MESSAGE_LENGTH);
     this.#lastAgentMessage = message;
+    // Structured control envelopes are consumed at turn.completed. They are
+    // protocol data, not user-facing progress, so never forward them to the
+    // Telegram progress reporter.
+    if (decodeQuestionOutcome(message) !== undefined) return [];
     return [this.#event({ type: "progress", message, stage: "agent_message" })];
   }
 
@@ -275,6 +288,56 @@ export class CodexEventMapper {
       }),
     );
   }
+}
+
+/**
+ * Codex SDK 0.150 does not expose an input-request event.  A turn can instead
+ * deliberately finish with this small structured outcome in its final message.
+ */
+function decodeQuestionOutcome(message: string | undefined): {
+  readonly questionId: string;
+  readonly question: string;
+  readonly choices: readonly string[];
+} | undefined {
+  if (message === undefined) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(message) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (
+    !isRecord(value) ||
+    (value.kind !== "question" && value.kind !== "request_for_input" && value.kind !== "request-for-input") ||
+    typeof value.question !== "string"
+  ) {
+    return undefined;
+  }
+  const question = boundedString(value.question, "", MAX_MESSAGE_LENGTH).trim();
+  if (question.length === 0) return undefined;
+  if (value.choices !== undefined && !Array.isArray(value.choices)) return undefined;
+  const choices = (value.choices ?? []).flatMap((choice): string[] =>
+    typeof choice === "string" && choice.trim().length > 0
+      ? [boundedString(choice, "", MAX_MESSAGE_LENGTH).trim()]
+      : [],
+  );
+  if (choices.length !== (value.choices?.length ?? 0)) return undefined;
+  return Object.freeze({
+    questionId: typeof value.questionId === "string" && value.questionId.length > 0
+      ? boundedString(value.questionId, "", 128)
+      : randomUUID(),
+    question,
+    choices: Object.freeze(choices),
+  });
+}
+
+function decodeIssueProposal(message: string | undefined): AgentIssueProposalEvent["proposal"] | undefined {
+  if (message === undefined) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(message) as unknown; } catch { return undefined; }
+  if (!isRecord(value) || value.kind !== "issue_creation" || value.provider !== "github" || !isRecord(value.draft)) return undefined;
+  if (typeof value.draft.summary !== "string" || typeof value.draft.description !== "string") return undefined;
+  return Object.freeze({ kind: "issue_creation", provider: value.provider, projectId: "", draft: Object.freeze({ summary: value.draft.summary, description: value.draft.description }) });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -12,6 +12,7 @@ import type {
   CodingAgent,
 } from "../../src/agent/CodingAgent.js";
 import type { AllowedOperation, ProjectConfig } from "../../src/config/ProjectConfig.js";
+import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
 
 const occurredAt = "2026-08-28T10:00:00.000Z";
 
@@ -63,6 +64,27 @@ describe("AgentManager", () => {
     expect(Object.isFrozen(manager.getSession("motor"))).toBe(true);
   });
 
+  it("ignores non-terminal Codex events after an issue proposal", async () => {
+    const agent = new FakeCodingAgent((options) => run(options.projectId, "RUN-1", [
+      event("thread_started", options.projectId, "RUN-1", { threadId: "THREAD-1" }),
+      event("issue_proposal", options.projectId, "RUN-1", {
+        proposal: {
+          kind: "issue_creation",
+          provider: "github",
+          projectId: options.projectId,
+          draft: { summary: "Summary", description: "Description" },
+        },
+      }),
+      event("progress", options.projectId, "RUN-1", { message: "Trailing bookkeeping" }),
+    ]));
+    const manager = createManager(agent);
+
+    await expect(manager.startTask("motor", "Create an issue proposal")).resolves.toMatchObject({
+      state: "COMPLETED",
+      terminalEvent: { type: "issue_proposal" },
+    });
+  });
+
   it("rejects a second operation for one project and releases the lock", async () => {
     const motorGate = deferredEvents();
     let startCount = 0;
@@ -93,7 +115,67 @@ describe("AgentManager", () => {
     motorGate.end();
     await first;
 
-    await expect(manager.startTask("motor", "After completion")).resolves.toBeUndefined();
+    await expect(manager.startTask("motor", "After completion")).resolves.toMatchObject({
+      projectId: "motor",
+      state: "COMPLETED",
+    });
+  });
+
+  it("stops an active task without discarding its resumable session", async () => {
+    const gate = deferredEvents();
+    const delivered: AgentEvent[] = [];
+    const agent = new FakeCodingAgent((options) => run(
+      options.projectId,
+      "RUN-motor",
+      gate.events,
+    ));
+    const manager = createManager(agent, (item) => delivered.push(item));
+
+    const running = manager.startTask("motor", "Stop me");
+    await vi.waitFor(() => {
+      expect(manager.getStatus("motor")).toMatchObject({ active: true, runId: "RUN-motor" });
+    });
+
+    await expect(manager.stop("motor")).resolves.toBe(true);
+    expect(agent.stops).toEqual(["RUN-motor"]);
+    expect(manager.getStatus("motor")).toMatchObject({ state: "STOPPED", active: true });
+
+    gate.push(event("completed", "motor", "RUN-motor", { summary: "Late completion" }));
+    gate.end();
+    await expect(running).resolves.toMatchObject({
+      state: "STOPPED",
+      terminalEvent: { type: "stopped", reason: "user" },
+    });
+
+    expect(delivered.map((item) => item.type)).toEqual(["stopped"]);
+    expect(manager.getSession("motor")).toMatchObject({
+      state: "STOPPED",
+      lastEvent: { type: "stopped" },
+    });
+    expect(manager.getSession("motor")).not.toHaveProperty("activeRunId");
+    await expect(manager.stop("motor")).resolves.toBe(false);
+  });
+
+  it("honors stop requested before the coding agent returns a run ID", async () => {
+    let resolveRun: ((run: AgentRun) => void) | undefined;
+    const agent = new FakeCodingAgent((_options) => new Promise<AgentRun>((resolve) => {
+      resolveRun = resolve;
+    }));
+    const manager = createManager(agent);
+    const running = manager.startTask("motor", "Stop during startup");
+    await vi.waitFor(() => expect(agent.starts).toHaveLength(1));
+
+    await expect(manager.stop("motor")).resolves.toBe(true);
+    resolveRun?.(run("motor", "RUN-late", [
+      event("completed", "motor", "RUN-late", { summary: "Must be ignored" }),
+    ]));
+
+    await expect(running).resolves.toMatchObject({
+      state: "STOPPED",
+      terminalEvent: { type: "stopped" },
+    });
+    expect(agent.stops).toEqual(["RUN-late"]);
+    expect(manager.getStatus("motor")).toMatchObject({ active: false, state: "STOPPED" });
   });
 
   it("allows different projects to run concurrently", async () => {
@@ -279,6 +361,7 @@ function createManager(agent: CodingAgent, onEvent?: (event: AgentEvent) => void
     ]),
     {
       clock: () => new Date(occurredAt),
+      gitService: CLEAN_GIT_STATUS_READER,
       ...(onEvent === undefined ? {} : { onEvent }),
     },
   );

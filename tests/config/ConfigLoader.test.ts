@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigError } from "../../src/config/AppConfig.js";
 import { ConfigLoader } from "../../src/config/ConfigLoader.js";
+import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -198,7 +199,90 @@ describe("ConfigLoader", () => {
       code: "PROJECTS_CONFIG_INVALID_JSON",
     });
   });
+
+  it("loads GitHub tracker credentials only from the configured environment", async () => {
+    const loader = new ConfigLoader({ GITHUB_ONE_TOKEN: " secret-one " });
+    const projects = [
+      trackerProject("plain"),
+      trackerProject("jira", { type: "jira" }),
+      trackerProject("github", {
+        type: "github",
+        owner: "org",
+        repository: "repo",
+        tokenEnv: "GITHUB_ONE_TOKEN",
+        apiBaseUrl: "https://api.github.com",
+        apiVersion: "2026-03-10",
+        pageSize: 10,
+        limits: {
+          requestTimeoutMs: 10_000,
+          responseBodyBytes: 1_048_576,
+          issueTitleCodePoints: 512,
+          issueBodyCodePoints: 12_000,
+          collectionItems: 50,
+          collectionValueCodePoints: 100,
+          paginationDepth: 10,
+          rateLimitRetryDelayMs: 3_000,
+        },
+      }),
+    ];
+
+    const secrets = loader.loadIssueTrackerSecrets(projects);
+
+    expect(secrets.getGitHubToken("github")).toBe("secret-one");
+    expect(secrets.getGitHubToken("plain")).toBeUndefined();
+    expect(secrets.redactionValues()).toEqual(["secret-one"]);
+    expect(JSON.stringify(secrets)).toBe("{}");
+    expect(JSON.stringify(projects)).not.toContain("secret-one");
+  });
+
+  it("reports a missing tracker credential without exposing another value", () => {
+    const loader = new ConfigLoader({ GITHUB_TOKEN: "different-secret" });
+    const project = trackerProject("github", {
+      type: "github",
+      owner: "org",
+      repository: "repo",
+      tokenEnv: "MISSING_GITHUB_TOKEN",
+      apiBaseUrl: "https://api.github.com",
+      apiVersion: "2026-03-10",
+      pageSize: 10,
+      limits: {
+        requestTimeoutMs: 10_000,
+        responseBodyBytes: 1_048_576,
+        issueTitleCodePoints: 512,
+        issueBodyCodePoints: 12_000,
+        collectionItems: 50,
+        collectionValueCodePoints: 100,
+        paginationDepth: 10,
+        rateLimitRetryDelayMs: 3_000,
+      },
+    });
+
+    expect(() => loader.loadIssueTrackerSecrets([project])).toThrowError(
+      expect.objectContaining({
+        code: "ISSUE_TRACKER_CREDENTIAL_REQUIRED",
+        variableName: "MISSING_GITHUB_TOKEN",
+      }),
+    );
+    try {
+      loader.loadIssueTrackerSecrets([project]);
+    } catch (error) {
+      expect((error as Error).message).not.toContain("different-secret");
+    }
+  });
 });
+
+function trackerProject(
+  id: string,
+  issueTracker?: ProjectConfig["issueTracker"],
+): ProjectConfig {
+  return {
+    id,
+    name: id,
+    path: "/tmp/project",
+    allowedOperations: new Set(["task"]),
+    ...(issueTracker === undefined ? {} : { issueTracker }),
+  };
+}
 
 async function createTemporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "codex-remote-config-test-"));

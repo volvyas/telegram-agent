@@ -67,6 +67,35 @@ describe("CodexAdapter", () => {
     expect(adapter.getThreadId("motor")).toBe("THREAD-1");
   });
 
+  it("treats a structured question as the terminal outcome of the stream", async () => {
+    const thread = new FakeThread([
+      { type: "thread.started", thread_id: "THREAD-1" },
+      { type: "turn.started" },
+      {
+        type: "item.completed",
+        item: {
+          id: "message-question",
+          type: "agent_message",
+          text: JSON.stringify({ kind: "question", question: "Which option?", choices: ["A", "B"] }),
+        },
+      },
+      { type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } },
+    ]);
+    const adapter = createAdapter(new FakeClient(thread));
+
+    const run = await adapter.start({
+      projectId: "motor",
+      workingDirectory: "/projects/motor",
+      prompt: "Ask me",
+    });
+
+    await expect(collect(run.events)).resolves.toEqual([
+      expect.objectContaining({ type: "thread_started" }),
+      expect.objectContaining({ type: "run_started" }),
+      expect.objectContaining({ type: "question", question: "Which option?", choices: ["A", "B"] }),
+    ]);
+  });
+
   it("resumes and sends messages to the requested persisted thread", async () => {
     const resumedEvents = completedEvents.map((event) =>
       event.type === "thread.started"
@@ -165,6 +194,27 @@ describe("CodexAdapter", () => {
     expect(events).toEqual([
       expect.objectContaining({ type: "run_started" }),
       expect.objectContaining({ type: "stopped", runId: "RUN-1", reason: "user" }),
+    ]);
+  });
+
+  it("emits stopped promptly even when the SDK iterator ignores abort", async () => {
+    const started = deferred<boolean>();
+    const adapter = createAdapter(new FakeClient(new IgnoringAbortFakeThread(
+      () => started.resolve(true),
+    )));
+    const run = await adapter.start({
+      projectId: "motor",
+      workingDirectory: "/projects/motor",
+      prompt: "Long task",
+    });
+    const collecting = collect(run.events);
+    await started.promise;
+
+    await adapter.stop(run.runId);
+
+    await expect(collecting).resolves.toEqual([
+      expect.objectContaining({ type: "run_started" }),
+      expect.objectContaining({ type: "stopped", reason: "user" }),
     ]);
   });
 
@@ -368,6 +418,28 @@ class BlockingFakeThread implements CodexThreadPort {
           yield { type: "turn.started" } as const;
           onStarted();
           await rejectWhenAborted(options.signal);
+        },
+      },
+    });
+  }
+}
+
+class IgnoringAbortFakeThread implements CodexThreadPort {
+  public readonly id: string | null = null;
+  readonly #onStarted: () => void;
+
+  public constructor(onStarted: () => void) {
+    this.#onStarted = onStarted;
+  }
+
+  public runStreamed(): Promise<{ readonly events: AsyncIterable<ThreadEvent> }> {
+    const onStarted = this.#onStarted;
+    return Promise.resolve({
+      events: {
+        async *[Symbol.asyncIterator]() {
+          yield { type: "turn.started" } as const;
+          onStarted();
+          await new Promise<never>(() => undefined);
         },
       },
     });

@@ -149,6 +149,12 @@ update
 і callbacks. Callback payload містить opaque action/confirmation ID; path,
 prompt і command у payload не передаються.
 
+Long polling використовує concurrent grammY runner, щоб control updates на
+кшталт `/stop` оброблялися, поки `/task` або `/test` ще очікує завершення.
+Application-level per-project locks у `AgentManager` лишаються authoritative
+serialization boundary і не дозволяють concurrent runner запускати дві
+несумісні operations для одного project.
+
 Active project зберігається per Telegram user ID. Навіть якщо whitelist спочатку
 містить одного користувача, model не робить singleton-user assumption.
 
@@ -321,7 +327,8 @@ persist-яться. Під час першого читання після resta
 - `danger-full-access` і bypass flags forbidden;
 - canonical repository path задає working directory;
 - SDK/CLI environment — allowlist;
-- рекомендований окремий gateway `CODEX_HOME` з mode `0700`;
+- global або project-specific `CODEX_HOME` з mode `0700`; project setting має
+  precedence над global default;
 - thread ID прив'язаний до project ID + canonical path fingerprint.
 
 ### Processes and Git
@@ -329,6 +336,14 @@ persist-яться. Під час першого читання після resta
 - `spawn` only, `shell: false`;
 - executable та args typed/configured окремо;
 - before/after Git operations read-only до explicit feature tasks;
+- task result зберігає повні before/after snapshots; path, який був dirty до
+  task, завжди позначається як pre-existing, навіть якщо під час task він знову
+  змінився;
+- path-level comparison має attribution `observation_only`: gateway може
+  визначити, що path став dirty у проміжку між snapshots, але не приписує зміну
+  виключно агенту, бо зовнішні процеси можуть змінювати той самий worktree;
+- final numstat описує весь diff відносно HEAD після task, а не гарантований
+  agent-only delta; untracked files входять у changed-files, але не в numstat;
 - commit лише через gateway confirmation;
 - push/reset/clean/discard не реалізуються автоматично;
 - `.env`, auth storage, data і logs не комітяться.
@@ -411,6 +426,27 @@ confirmation.
 - **Phase 4:** task IDs/history, confirmations, commit, restart reconciliation.
 - **Phase 5:** logging, robust errors, message boundaries, security review, docs,
   systemd і acceptance.
+- **Phase 5B:** optional read-only Jira adapter behind an `IssueTracker` port;
+  ticket lookup and fixed `assigned to me` search only, with no mutation API or
+  automatic Jira-to-Codex data flow. Detailed plan: [`jira-integration.md`](./jira-integration.md).
+
+## Phase 2 smoke checklist
+
+Automated coverage in `tests/phase2/Phase2EndToEnd.test.ts` drives real grammY
+updates through `TelegramBot` and `CommandRouter`. It verifies two isolated
+projects, active-project switching, batched progress edits, restart recovery, a
+persisted pending question, and a plain-text answer sent to the original Codex
+thread.
+
+Before a release with a real Codex CLI and Telegram bot, an operator must also:
+
+- [ ] select each configured project and start one harmless task in each;
+- [ ] verify that progress is edited in one status message rather than flooding chat;
+- [ ] make Codex return a structured `{ "kind": "question" }` outcome, answer it
+  through Telegram, and confirm the same thread continues;
+- [ ] restart the gateway while waiting for that answer, then verify the dashboard,
+  pending question, and thread are restored;
+- [ ] confirm startup, task execution, and shutdown produce no Node deprecation warnings.
 
 Перед Phase 1 потрібно вирішити два локальні prerequisites з
 `environment.md`: створити Git repository та надати Telegram token/whitelist.

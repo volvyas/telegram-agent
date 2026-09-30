@@ -63,6 +63,8 @@ CODEX_HOME=/home/service-user/.local/share/codex-remote/codex-home
 `TELEGRAM_ALLOWED_USER_IDS` приймає один або кілька positive numeric IDs через
 кому. `PROJECTS_CONFIG` може бути relative до кореня checkout або absolute.
 `CODEX_HOME` має бути absolute і бажано окремим від interactive Codex profile.
+Окремий project може перевизначити profile у `projects.json` через absolute
+`codexHome`; якщо поле відсутнє, використовується цей global default.
 
 Підготуйте та автентифікуйте окремий Codex profile від імені service user:
 
@@ -88,6 +90,22 @@ cp projects.example.json projects.json
 до кореня Git repository та дозволені operations. Commands задаються тільки як
 окремі `executable` й `args`; shell strings, pipes і substitutions не потрібні.
 
+Опційно вкажіть project-specific Codex profile:
+
+```json
+{
+  "name": "Motor Backend",
+  "path": "/home/user/projects/motor-backend",
+  "codexHome": "/home/service-user/.local/share/codex-remote/motor-codex-home",
+  "allowedOperations": ["task", "status"]
+}
+```
+
+`codexHome` має бути absolute, належати service user і мати mode `0700`.
+Project без цього поля використовує global `CODEX_HOME`. Gateway створює окремий
+Codex client для кожного project profile; кожен profile потрібно окремо
+автентифікувати через `CODEX_HOME=... codex login`.
+
 ```json
 {
   "projects": {
@@ -106,6 +124,63 @@ cp projects.example.json projects.json
 
 Кожен path повинен існувати, бути canonical Git repository root і бути
 доступним service user. `projects.json`, `.env`, `data/` та logs ігноруються Git.
+
+### GitHub Issues token
+
+Для project з `issueTracker.type: "github"` створіть окремий
+[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+з мінімальним read-only доступом:
+
+1. У GitHub відкрийте **Settings → Developer settings → Personal access
+   tokens → Fine-grained tokens** і натисніть **Generate new token**.
+2. Вкажіть зрозумілу назву, короткий expiration і потрібного **Resource owner**.
+3. У **Repository access** виберіть **Only select repositories** та додайте лише
+   repository, вказаний у project configuration.
+4. У **Repository permissions** встановіть **Issues: Read-only**. Не надавайте
+   write permissions; `Metadata: Read-only` GitHub додає автоматично.
+5. Натисніть **Generate token** і одразу скопіюйте значення: повторно GitHub
+   його не покаже. Якщо organization вимагає approval, дочекайтеся схвалення
+   owner/admin — до цього token матиме статус `pending` і не дасть доступу до
+   private resources.
+6. Запишіть token лише в локальний `.env` під ім'ям із `tokenEnv` відповідного
+   project та залиште файл доступним тільки service user:
+
+```dotenv
+GITHUB_MOTOR_ISSUES_TOKEN=github_pat_replace_with_real_token
+```
+
+```json
+{
+      "issueTracker": {
+        "type": "github",
+        "owner": "example-org",
+        "repository": "motor-backend",
+        "tokenEnv": "GITHUB_MOTOR_ISSUES_TOKEN",
+        "apiBaseUrl": "https://api.github.com",
+        "apiVersion": "2026-03-10",
+        "pageSize": 10
+  }
+}
+```
+
+Не додавайте token до `projects.json`, Git remote URL, command arguments або
+systemd unit. Для різних owners/repositories можна використовувати окремі
+tokens і різні `tokenEnv`. Детальні правила створення та керування token:
+[GitHub documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
+Для GitHub Enterprise Server вкажіть API base у project configuration у формі
+`https://HOSTNAME/api/v3`. Origin, owner і repository належать operator-owned
+configuration; Telegram user не може їх змінити. `jira` можна вказати як
+зарезервований provider, але до появи Jira adapter він безпечно повертає
+повідомлення про непідтримуваний provider.
+
+Створення issue — окремий opt-in. Для нього додайте `allowCreation: true` і
+окремий `writeTokenEnv` із fine-grained token, що має `Issues: Read and write`
+лише для configured repository. Read token із `tokenEnv` ніколи не підвищується
+автоматично. Agent спочатку показує точний bounded preview, а `POST` виконується
+лише після одноразового Telegram `Allow once`; `Deny`, expiry або повторний
+callback не виконують network mutation. Timeout після POST не повторюється
+автоматично.
 
 ## Ручний запуск
 
@@ -197,11 +272,23 @@ sudo --preserve-env=PATH \
 - `/project <id>` — вибір active project;
 - `/task <text>` — запуск задачі;
 - `/task`, а потім наступне text message — двокроковий запуск задачі.
+- `/issue <number>` або `/issue #<number>` — read-only issue lookup активного
+  project;
+- `/issue mine` — bounded open issues, assigned authenticated GitHub account,
+  із opaque short-lived pagination buttons.
+
+Issue commands використовують тільки tracker активного project. Lookup не
+завантажує comments, events, attachments або HTML і не передає issue в agent
+session. Результати та response bodies не persist-яться. GitHub token живе
+лише в environment; у `projects.json` зберігається тільки ім'я environment
+змінної. Для tracker без credentials, private repository без дозволу,
+відсутнього issue або rate limit gateway показує безпечне узагальнене
+повідомлення.
 
 Другий active task для того самого project відхиляється; різні projects можуть
 працювати паралельно. Команди наступних фаз (`/status`, `/git`, `/diff`, `/test`,
-`/stop`, `/continue`, `/commit`) можуть бути присутні в project policy, але ще
-не зареєстровані у поточному Telegram router.
+`/stop`, `/continue`, `/commit`) працюють лише в межах active project і
+відповідно до project policy.
 
 ## IntelliJ IDEA та локальні зміни
 
@@ -210,6 +297,9 @@ Gateway і IntelliJ працюють із тими самими файлами. 
 створює окремий worktree і не вважає наявні user changes власними.
 
 ## Безпека і дані
+
+Повна модель загроз, межі довіри та regression coverage описані в
+[`docs/security.md`](docs/security.md).
 
 - Telegram whitelist middleware виконується до command/text/callback handlers.
 - Codex працює лише у validated configured repository з `workspace-write`, без
@@ -252,6 +342,17 @@ Configured command не знайдено під systemd:
   executable доступний через PATH Node directory, `/usr/local/bin`, `/usr/bin`
   чи `/bin`;
 - після зміни Node path повторно виконайте service `install`.
+
+Issue tracker не відповідає або повертає access error:
+
+- перевірте, що `tokenEnv` існує в `.env` саме під назвою з project config;
+- переконайтеся, що fine-grained token має тільки `Issues: Read-only` для
+  потрібного repository та, якщо потрібно, organization approval;
+- для GHES перевірте `https://HOSTNAME/api/v3`, TLS certificate і доступність
+  instance з gateway host;
+- `jira` є зарезервованим provider і навмисно не працює в цій ітерації;
+- повторіть `/issue mine` після rate-limit reset; довільний search query або
+  чужий login не підтримуються.
 
 Після зміни checkout path або repository path service/session не стартує:
 

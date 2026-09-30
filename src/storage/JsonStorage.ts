@@ -1,5 +1,5 @@
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -45,8 +45,14 @@ export class JsonStorage implements Storage {
   #acceptingOperations = true;
 
   public constructor(dataDirectory: string, fileName = "state.json") {
-    this.#dataDirectory = dataDirectory;
-    this.#stateFile = join(dataDirectory, fileName);
+    if (!isAbsolute(dataDirectory)) {
+      throw new TypeError("Storage directory must be absolute");
+    }
+    if (fileName.length === 0 || fileName.includes("\0") || basename(fileName) !== fileName) {
+      throw new TypeError("Storage file name must not leave the storage directory");
+    }
+    this.#dataDirectory = resolve(dataDirectory);
+    this.#stateFile = join(this.#dataDirectory, fileName);
   }
 
   public load(): Promise<PersistedState> {
@@ -90,6 +96,7 @@ export class JsonStorage implements Storage {
     if (this.#state !== undefined) {
       return this.#state;
     }
+    await this.#secureStoragePaths();
     let contents: string;
     try {
       contents = await readFile(this.#stateFile, "utf8");
@@ -119,6 +126,11 @@ export class JsonStorage implements Storage {
       );
     }
     try {
+      // DEV-035 state files predate confirmations. Keep schema v1 readable and
+      // normalize the new collection before validating the document.
+      if (isRecord(document) && document.confirmations === undefined) {
+        document = { ...document, confirmations: [] };
+      }
       assertPersistedState(document);
     } catch (error) {
       throw new JsonStorageError("STORAGE_DAMAGED", "Storage state has an invalid shape", {
@@ -135,7 +147,7 @@ export class JsonStorage implements Storage {
       `.${basename(this.#stateFile)}.${String(process.pid)}.${randomUUID()}.tmp`,
     );
     try {
-      await mkdir(this.#dataDirectory, { recursive: true, mode: 0o700 });
+      await this.#secureStoragePaths();
       const handle = await open(temporaryFile, "wx", 0o600);
       try {
         await handle.writeFile(`${JSON.stringify(state, undefined, 2)}\n`, "utf8");
@@ -144,12 +156,47 @@ export class JsonStorage implements Storage {
         await handle.close();
       }
       await rename(temporaryFile, this.#stateFile);
+      await chmod(this.#stateFile, 0o600);
       await syncDirectory(this.#dataDirectory);
     } catch (error) {
       await unlink(temporaryFile).catch(() => undefined);
       throw new JsonStorageError("STORAGE_WRITE_FAILED", "Unable to persist storage state", {
         cause: error,
       });
+    }
+  }
+
+  async #secureStoragePaths(): Promise<void> {
+    try {
+      await mkdir(this.#dataDirectory, { recursive: true, mode: 0o700 });
+      const directoryStat = await lstat(this.#dataDirectory);
+      if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+        throw new JsonStorageError(
+          "STORAGE_READ_FAILED",
+          "Storage directory must be a real directory",
+        );
+      }
+      await chmod(this.#dataDirectory, 0o700);
+
+      try {
+        const stateStat = await lstat(this.#stateFile);
+        if (!stateStat.isFile() || stateStat.isSymbolicLink()) {
+          throw new JsonStorageError(
+            "STORAGE_READ_FAILED",
+            "Storage state must be a regular file",
+          );
+        }
+        await chmod(this.#stateFile, 0o600);
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+      }
+    } catch (error) {
+      if (error instanceof JsonStorageError) throw error;
+      throw new JsonStorageError(
+        "STORAGE_READ_FAILED",
+        "Unable to secure storage paths",
+        { cause: error },
+      );
     }
   }
 }
@@ -172,6 +219,18 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
     if (session.threadId !== undefined) assertNonEmptyString(session.threadId);
     if (session.startedAt !== undefined) assertTimestamp(session.startedAt);
     assertTimestamp(session.updatedAt);
+    if (session.pendingQuestion !== undefined) {
+      const question = session.pendingQuestion;
+      assert(isRecord(question), "invalid pending question");
+      assertNonEmptyString(question.questionId);
+      assertNonEmptyString(question.question);
+      assert(Array.isArray(question.choices), "invalid question choices");
+      for (const choice of question.choices) assertNonEmptyString(choice);
+      if (question.userId !== undefined) {
+        assert(typeof question.userId === "number" && Number.isSafeInteger(question.userId) && question.userId >= 0, "invalid question user");
+      }
+      assertTimestamp(question.createdAt);
+    }
   }
   assert(Array.isArray(value.tasks), "tasks must be an array");
   for (const task of value.tasks) {
@@ -181,7 +240,13 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
     assert(typeof task.promptSummary === "string", "invalid prompt summary");
     assert(TASK_STATUSES.has(task.status as string), "invalid task status");
     assertTimestamp(task.createdAt);
+    if (task.startedAt !== undefined) assertTimestamp(task.startedAt);
+    if (task.finishedAt !== undefined) assertTimestamp(task.finishedAt);
     assertTimestamp(task.updatedAt);
+    if (task.durationMs !== undefined) assertNonNegativeInteger(task.durationMs, "invalid task duration");
+    if (task.exitCode !== undefined && task.exitCode !== null) assertInteger(task.exitCode, "invalid task exit code");
+    if (task.testSummary !== undefined) assertTestSummary(task.testSummary);
+    if (task.gitSummary !== undefined) assertGitSummary(task.gitSummary);
   }
   assert(isRecord(value.sequence), "sequence must be an object");
   assert(
@@ -189,6 +254,42 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
       (value.sequence.nextTaskNumber as number) >= 1,
     "invalid task sequence",
   );
+  assert(Array.isArray(value.confirmations), "confirmations must be an array");
+  for (const confirmation of value.confirmations) {
+    assert(isRecord(confirmation), "invalid confirmation");
+    assertNonEmptyString(confirmation.id);
+    assert(typeof confirmation.userId === "number" && Number.isSafeInteger(confirmation.userId) && confirmation.userId >= 0, "invalid confirmation user");
+    assertNonEmptyString(confirmation.projectId);
+    assertNonEmptyString(confirmation.operation);
+    assertTimestamp(confirmation.createdAt);
+    assertTimestamp(confirmation.expiresAt);
+    assert(new Date(confirmation.expiresAt).valueOf() > new Date(confirmation.createdAt).valueOf(), "invalid confirmation expiry");
+  }
+}
+
+function assertTestSummary(value: unknown): void {
+  assert(isRecord(value), "invalid test summary");
+  assert(new Set(["not_run", "passed", "failed", "stopped"]).has(value.status as string), "invalid test status");
+  if (value.durationMs !== undefined) assertNonNegativeInteger(value.durationMs, "invalid test duration");
+  if (value.exitCode !== undefined && value.exitCode !== null) assertInteger(value.exitCode, "invalid test exit code");
+}
+
+function assertGitSummary(value: unknown): void {
+  assert(isRecord(value), "invalid Git summary");
+  assert(value.branchBefore === null || typeof value.branchBefore === "string", "invalid initial branch");
+  assert(value.branchAfter === null || typeof value.branchAfter === "string", "invalid final branch");
+  assert(typeof value.cleanBefore === "boolean" && typeof value.cleanAfter === "boolean", "invalid Git cleanliness");
+  for (const field of ["changedFiles", "additions", "deletions", "observedDuringTaskFiles"] as const) {
+    assertNonNegativeInteger(value[field], `invalid Git ${field}`);
+  }
+}
+
+function assertNonNegativeInteger(value: unknown, message: string): void {
+  assert(typeof value === "number" && Number.isSafeInteger(value) && value >= 0, message);
+}
+
+function assertInteger(value: unknown, message: string): void {
+  assert(typeof value === "number" && Number.isSafeInteger(value), message);
 }
 
 function assertTimestamp(value: unknown): asserts value is string {

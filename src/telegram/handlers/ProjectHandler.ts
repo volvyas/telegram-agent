@@ -2,7 +2,9 @@ import type { Context } from "grammy";
 
 import type { ProjectConfig } from "../../config/ProjectConfig.js";
 import type { ProjectManager } from "../../projects/ProjectManager.js";
+import type { Storage } from "../../storage/Storage.js";
 import { ProjectKeyboard } from "../keyboards/ProjectKeyboard.js";
+import type { DashboardKeyboard } from "../keyboards/DashboardKeyboard.js";
 
 const UNKNOWN_PROJECT_MESSAGE = "Unknown project.";
 
@@ -10,17 +12,23 @@ export class ProjectHandler {
   readonly #projectManager: ProjectManager;
   readonly #keyboard: ProjectKeyboard;
   readonly #activeProjects = new Map<number, string>();
+  readonly #storage: Storage | undefined;
+  readonly #dashboard: DashboardKeyboard | undefined;
 
   public constructor(
     projectManager: ProjectManager,
     keyboard = new ProjectKeyboard(),
+    storage?: Storage,
+    dashboard?: DashboardKeyboard,
   ) {
     this.#projectManager = projectManager;
     this.#keyboard = keyboard;
+    this.#storage = storage;
+    this.#dashboard = dashboard;
   }
 
   public async handleStart(context: Context): Promise<void> {
-    const activeProject = this.activeProjectFor(context);
+    const activeProject = await this.activeProjectFor(context);
     if (activeProject === undefined) {
       await context.reply(
         "Welcome. Select a project to continue.",
@@ -29,7 +37,7 @@ export class ProjectHandler {
       return;
     }
 
-    await context.reply(formatDashboard(activeProject));
+    await this.replyDashboard(context, activeProject);
   }
 
   public async handleProjects(context: Context): Promise<void> {
@@ -65,6 +73,15 @@ export class ProjectHandler {
     return projectId === undefined ? undefined : this.#projectManager.get(projectId);
   }
 
+  public async restoreActiveProject(userId: number): Promise<ProjectConfig | undefined> {
+    const active = this.getActiveProject(userId);
+    if (active !== undefined || this.#storage === undefined) return active;
+    const record = (await this.#storage.load()).activeProjects[String(userId)];
+    const project = record === undefined ? undefined : this.#projectManager.get(record.projectId);
+    if (project !== undefined) this.#activeProjects.set(userId, project.id);
+    return project;
+  }
+
   private async selectProject(context: Context, projectId: string): Promise<void> {
     const userId = context.from?.id;
     const project = this.#projectManager.get(projectId);
@@ -74,12 +91,30 @@ export class ProjectHandler {
     }
 
     this.#activeProjects.set(userId, project.id);
-    await context.reply(formatDashboard(project));
+    if (this.#storage !== undefined) {
+      const updatedAt = new Date().toISOString();
+      await this.#storage.update((state) => ({
+        ...state,
+        activeProjects: {
+          ...state.activeProjects,
+          [String(userId)]: { projectId: project.id, updatedAt },
+        },
+      }));
+    }
+    await this.replyDashboard(context, project);
   }
 
-  private activeProjectFor(context: Context): ProjectConfig | undefined {
+  private async activeProjectFor(context: Context): Promise<ProjectConfig | undefined> {
     const userId = context.from?.id;
-    return userId === undefined ? undefined : this.getActiveProject(userId);
+    return userId === undefined ? undefined : this.restoreActiveProject(userId);
+  }
+
+  private async replyDashboard(context: Context, project: ProjectConfig): Promise<void> {
+    if (this.#dashboard === undefined) {
+      await context.reply(formatDashboard(project));
+      return;
+    }
+    await context.reply(formatDashboard(project), { reply_markup: this.#dashboard.build(project) });
   }
 
   private projectListOptions(): { readonly reply_markup: ReturnType<ProjectKeyboard["build"]> } {
@@ -106,6 +141,23 @@ function formatDashboard(project: ProjectConfig): string {
   const operations = [...project.allowedOperations].join(", ");
   return [
     `Active project: ${project.name} (${project.id})`,
+    ...(project.codexHome === undefined ? [] : [`Codex: ${codexIdentifier(project.codexHome)}`]),
     `Available operations: ${operations}`,
   ].join("\n");
+}
+
+function codexIdentifier(codexHome: string): string {
+  const withoutTrailingSeparators = codexHome.replace(/[\\/]+$/u, "");
+  const separator = Math.max(
+    withoutTrailingSeparators.lastIndexOf("/"),
+    withoutTrailingSeparators.lastIndexOf("\\"),
+  );
+  const component = [...withoutTrailingSeparators.slice(separator + 1)]
+    .filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join("")
+    .trim();
+  return component.length === 0 ? "configured" : component.slice(0, 128);
 }
