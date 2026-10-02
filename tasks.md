@@ -1072,6 +1072,544 @@ atomic/one-shot. `POST` не retry-ити автоматично: timeout/networ
 
 ---
 
+## Phase 8 — Universal local model providers for Codex
+
+Локальна модель залишається inference backend для реального Codex agent, а не
+окремим самописним агентом. `AgentManager`, Telegram handlers і domain
+`CodingAgent` не повинні знати, чи модель виконується OpenAI, Ollama, LM Studio,
+`llama.cpp` або іншим сумісним server. Межа сумісності цієї фази — OpenAI
+Responses protocol, який фактично потрібен встановленій версії Codex: endpoint
+має підтримувати `POST /v1/responses`, incremental SSE, terminal
+`response.completed`, function/tool calls та коректне продовження діалогу.
+Наявність лише `/v1/models`, `/v1/chat/completions` або однієї текстової
+відповіді не вважається доказом сумісності.
+
+Provider configuration є operator-owned і reusable між projects. Секрети не
+записуються в JSON; project посилається на provider ID та задає model ID.
+Відсутня agent configuration зберігає чинну поведінку з OpenAI Codex. Ollama і
+LM Studio підтримуються як built-in Codex providers для стандартних local
+defaults і через generic Responses provider для remote/custom endpoint.
+`llama.cpp` використовує generic Responses provider лише якщо capability probe
+підтвердив потрібний protocol; інакше потрібен окремий compatibility proxy, а не
+прихований fallback на Chat Completions.
+
+Цільова форма config (точні назви остаточно фіксуються в DEV-066):
+
+```json
+{
+  "modelProviders": {
+    "openai-default": {
+      "type": "codex-builtin",
+      "provider": "openai"
+    },
+    "ollama-local": {
+      "type": "codex-builtin",
+      "provider": "ollama"
+    },
+    "home-llama": {
+      "type": "responses",
+      "name": "Home llama.cpp",
+      "baseUrl": "http://192.168.1.10:8080/v1",
+      "apiKeyEnv": "HOME_LLAMA_API_KEY"
+    }
+  },
+  "projects": {
+    "motor": {
+      "name": "Motor Backend",
+      "path": "/home/user/projects/motor-backend",
+      "agent": {
+        "provider": "home-llama",
+        "model": "configured-server-model"
+      },
+      "allowedOperations": ["task", "status", "git", "diff", "test", "stop"]
+    }
+  }
+}
+```
+
+### [ ] DEV-065 — Перевірити Codex Responses compatibility та remote `llama.cpp`
+
+**Результат:** `docs/local-model-integration.md` із зафіксованими versions,
+capability matrix і sanitized probe evidence.
+
+Перевірити фактичний config surface встановлених `codex-cli` та
+`@openai/codex-sdk`: `model`, `model_provider`, `model_providers`, `base_url`,
+`wire_api`, environment-key authentication, streaming/retry settings і
+поведінку resume. Окремо виконати read-only probes до operator-supplied
+`llama.cpp` endpoint: discovery/health лише як diagnostics, реальний
+`POST /v1/responses`, incremental SSE, terminal event, один harmless function
+call, передавання tool result і наступний turn. Зафіксувати точні server/model
+versions і не виводити API keys, приватні prompts або raw reasoning.
+
+Для Ollama та LM Studio підтвердити обидва потрібні deployment modes:
+
+- built-in Codex provider зі стандартним endpoint;
+- generic Responses provider із explicit `baseUrl`, придатний для іншого host.
+
+Якщо поточний `llama.cpp` не реалізує повний Codex-compatible Responses flow,
+задокументувати точний gap і створити окрему задачу на вузький compatibility
+proxy. Не маскувати несумісність переходом на Chat Completions і не починати
+реалізацію proxy в цій задачі.
+
+**Готово, коли:** один bounded diagnostic turn без filesystem mutation доводить
+або спростовує сумісність remote `llama.cpp`; matrix окремо показує endpoint,
+streaming, tools, continuation і auth для Ollama/LM Studio/`llama.cpp`; обраний
+integration flow не суперечить фактичним CLI/SDK options.
+
+### [ ] DEV-066 — Визначити generic model-provider configuration
+
+**Залежить від:** DEV-065. **Types:** `ModelProviderConfig`,
+`CodexBuiltinProviderConfig`, `ResponsesProviderConfig`, `ProjectAgentConfig`,
+доповнення `ProjectConfig`/`ConfigLoader`.
+
+Додати top-level reusable `modelProviders` і optional project-level `agent` з
+provider reference та model ID. Підтримати discriminated providers:
+
+- `codex-builtin`: тільки allowlisted `openai`, `ollama`, `lmstudio`;
+- `responses`: bounded provider ID/name, absolute normalized `http`/`https`
+  `baseUrl`, fixed `wireApi: responses` у runtime та optional `apiKeyEnv`.
+
+Inline token, userinfo у URL, fragment, довільні headers/query parameters і
+project-owned Codex TOML заборонити. `apiKeyEnv` є лише назвою environment
+variable; її значення завантажується окремо, додається до redaction і ніколи не
+потрапляє в typed project config, storage або errors. Дозволити plain HTTP лише
+для loopback/private operator-owned network endpoint; public/non-local endpoint
+має використовувати HTTPS. URL і provider ID не можуть надходити з Telegram.
+
+Зафіксувати safe bounded defaults для request retries, stream retries та idle
+timeout замість відкритого generic config passthrough. Missing `agent` має
+мігрувати до нинішнього OpenAI Codex behavior без зміни існуючих config files.
+Оновити `projects.example.json`, architecture і configuration documentation.
+
+**Готово, коли:** validation tests покривають built-in і custom providers,
+unknown/duplicate reference, malformed URL, URL credentials, unsafe public
+HTTP, missing secret, unsupported wire API, bounded model/provider fields та
+backward-compatible config без `modelProviders`/`agent`.
+
+### [ ] DEV-067 — Параметризувати `CodexAdapter` і додати provider resolver
+
+**Залежить від:** DEV-066. **Класи:** `ModelProviderResolver`,
+`CodexClientFactory`, доповнення `CodexAdapter` та `Application` composition.
+
+Прибрати hardcoded provider selection із composition root. Resolver має
+перетворювати validated domain config у SDK-owned settings, не експортуючи
+Codex types назовні:
+
+- явно передавати model для new/resumed thread;
+- для built-in provider явно задавати його Codex provider ID;
+- для generic endpoint генерувати isolated custom `model_providers.<id>` із
+  `base_url`, `wire_api = "responses"` і optional `env_key`;
+- передавати child process лише чинний environment allowlist та рівно один
+  referenced provider credential;
+- зберегти locked-down sandbox, approval, network/search і protected-path
+  settings незалежно від provider.
+
+Не записувати generated provider config у shared `CODEX_HOME/config.toml`:
+кожен adapter отримує explicit SDK config, щоб два projects могли одночасно
+працювати з різними providers/models без state leakage. Помилки config/start/
+stream мають містити safe provider ID, але не endpoint credentials або raw
+response body.
+
+**Готово, коли:** unit tests з fake SDK client перевіряють точний mapping для
+OpenAI/Ollama/LM Studio/custom Responses, model propagation, credential
+allowlisting/redaction, per-project isolation та незмінність security options;
+існуючий OpenAI flow і всі його tests залишаються зеленими.
+
+### [ ] DEV-068 — Прив'язати persisted session до provider/model identity
+
+**Залежить від:** DEV-066–067. **Класи:** `AgentSession`, `SessionManager`,
+storage schema migration.
+
+Додати до persisted session stable non-secret agent identity: adapter kind,
+provider ID, model ID і fingerprint нормалізованої non-secret provider config.
+Thread ID не можна resume-ити через інший provider, endpoint, model або
+repository. При config change старий thread зберігається лише як historical
+metadata, позначається non-resumable, а наступний task створює новий thread із
+явним user-visible diagnostic; не надсилати старий thread ID новому provider.
+
+Зробити versioned storage migration для чинних schema-v1 sessions. Existing
+sessions без identity можуть resume-итися тільки як legacy OpenAI sessions;
+не приписувати їх локальному provider за припущенням. Restart recovery та
+`WAITING_FOR_USER` мають застосовувати ту саму identity validation.
+
+**Готово, коли:** migration/restart tests покривають legacy OpenAI session,
+незмінний local provider, зміну model/base URL/provider, два projects на одному
+endpoint, однаковий model на різних endpoints і заборону cross-provider resume.
+
+### [ ] DEV-069 — Додати provider diagnostics без startup dependency
+
+**Залежить від:** DEV-067. **Класи/файли:** typed diagnostic service і
+operator-only probe command/script.
+
+Gateway повинен стартувати й дозволяти status/stop/config diagnostics, навіть
+коли remote inference host вимкнений. Не робити network health check blocking
+startup dependency. Додати explicit operator probe, який для обраного provider
+перевіряє DNS/connect/TLS/auth, Responses SSE lifecycle і harmless tool call із
+bounded input/output/time. `/v1/models` можна показувати як додатковий signal,
+але не як proof of Codex compatibility.
+
+Нормалізувати unreachable, timeout, TLS, authentication, unknown model,
+malformed SSE, missing terminal event, invalid tool call та protocol mismatch у
+typed safe diagnostics. Raw provider body, URL credentials і secrets не
+відправляти в Telegram/logs. Probe не отримує repository tools і нічого не
+змінює у workspace.
+
+**Готово, коли:** fake-server tests відтворюють кожен failure mode; application
+успішно стартує з offline provider; probe чітко відрізняє network health від
+повної Codex compatibility та завершується по timeout/abort.
+
+### [ ] DEV-070 — Додати provider contract, integration і security tests
+
+**Залежить від:** DEV-067–069.
+
+Побудувати local fake Responses server із deterministic SSE fixtures і
+запустити через нього реальний `@openai/codex-sdk`/bundled Codex CLI у temporary
+Git repository. Перевірити new turn, tool request/result, command/file events,
+completion, resume, stop та malformed/interrupted stream. Окремі table-driven
+tests мають довести однакове config mapping для standard Ollama, LM Studio і
+custom `llama.cpp` endpoints без runtime-specific branches у `AgentManager`.
+
+Security regression suite має перевіряти, що Telegram/prompt/model output не
+може змінити provider/base URL/model credential; provider A не бачить secret,
+thread або response provider B; logs/storage/events не містять token чи raw
+reasoning; endpoint не розширює чинні filesystem/command permissions Codex.
+
+**Готово, коли:** tests проходять offline і детерміновано, використовують real
+SDK/CLI boundary хоча б для одного full flow, покривають cancellation/recovery
+та не потребують installed Ollama/LM Studio/`llama.cpp`.
+
+### [ ] DEV-071 — Документація та live acceptance трьох local runtimes
+
+**Залежить від:** DEV-070.
+
+Оновити README, `.env.example`, `projects.example.json`, architecture, security
+і acceptance docs. Описати local та LAN setup для Ollama, LM Studio і
+`llama.cpp`, вимогу Responses/tool/SSE compatibility, model/context limits,
+optional auth/TLS, firewall/bind правила, systemd network dependency,
+troubleshooting і безпечний rollback на default OpenAI provider.
+
+Провести opt-in live matrix на disposable Git repositories для кожного runtime:
+provider/model detection, repository read, harmless command, small file patch,
+completion, second-turn resume, `/stop`, gateway restart і project switching
+між cloud/local providers. Для remote `llama.cpp` зафіксувати server/model
+version та measured first-token/turn duration без prompt/file contents. Ollama
+і LM Studio можуть працювати локально або на test host, але не позначати runtime
+accepted лише через fake server або documentation claim.
+
+**Готово, коли:** build/test/security suites зелені; live matrix явно має
+PASS/FAIL/N/A для кожного runtime і capability; щонайменше configured remote
+`llama.cpp` проходить повний Telegram → Codex → model → tools → result flow;
+кожне runtime deviation оформлене окремою задачею, а default OpenAI flow не має
+регресій.
+
+---
+
+## Phase 9 — Secure optional Web UI
+
+Web UI стає повноцінним transport поряд із Telegram і використовує ті самі
+application/domain services, operation policy, confirmations, project/session
+isolation та agent events. Telegram більше не є обов'язковою runtime
+залежністю: gateway може працювати як web-only, Telegram-only або з обома
+transports одночасно. Принаймні один transport має бути enabled.
+
+Перша версія Web UI розрахована на одного operator і не потребує нової БД.
+Password verifier зберігається в `.env` як Argon2id hash або, якщо обрана
+реалізація не має Argon2id, як параметризований scrypt hash; plaintext password,
+reversible encryption і fast SHA hash не дозволяються. Authenticated web
+sessions є opaque, random і process-local: restart gateway відкликає всі web
+sessions. Чинний `JsonStorage` продовжує зберігати лише gateway domain state,
+але не password, session cookie або CSRF secret.
+
+У production browser-facing traffic дозволений тільки через HTTPS:
+
+- `direct` mode — application сама слухає TLS із operator-owned certificate/key;
+- `reverse-proxy` mode — application слухає лише loopback або Unix socket, а
+  єдиний зовнішній listener належить explicitly trusted HTTPS reverse proxy.
+
+Production не може bind-итися plain HTTP на LAN/public interface, довіряти
+довільному `X-Forwarded-Proto` або запускатися без HTTPS public URL. Development
+HTTP дозволений лише explicit opt-in на loopback і ніколи не є production
+default.
+
+Цільова форма environment config (точні назви фіксуються в DEV-074—076):
+
+```dotenv
+TELEGRAM_ENABLED=false
+
+WEB_ENABLED=true
+WEB_ENVIRONMENT=production
+WEB_HOST=127.0.0.1
+WEB_PORT=8443
+WEB_PUBLIC_URL=https://agent.example.test
+WEB_TLS_MODE=direct
+WEB_TLS_CERT_PATH=/etc/codex-remote/tls/cert.pem
+WEB_TLS_KEY_PATH=/etc/codex-remote/tls/key.pem
+WEB_PASSWORD_HASH='$argon2id$v=19$...'
+```
+
+`reverse-proxy` mode не використовує application certificate/key, але вимагає
+loopback/Unix bind, exact `WEB_PUBLIC_URL=https://...` і documented trusted
+proxy boundary. `.env`, private key та інші secrets мають належати service user
+і бути недоступними group/others.
+
+### [ ] DEV-072 — Зафіксувати Web UI architecture і threat model
+
+**Результат:** ADR у `docs/architecture.md` і Web-specific доповнення
+`docs/security.md`.
+
+Порівняти мінімальний Node HTTPS server та maintained web framework і вибрати
+один bounded dependency set із schema validation, lifecycle/shutdown hooks,
+request/body limits і predictable security behavior. Зафіксувати delivery
+model UI (server-rendered або local static bundle), same-origin JSON API та SSE
+для progress/events. Не використовувати CDN, remote fonts/scripts, third-party
+analytics або client-side secrets. У першій ітерації не вводити окремий frontend
+deployment/service.
+
+Описати trust boundaries і threats: exposed agent control plane, password
+guessing, session theft/fixation, CSRF, XSS через agent/Git/issue output,
+clickjacking, Host-header poisoning, proxy-header spoofing, request smuggling/
+oversized bodies, slow clients/SSE exhaustion, sensitive response caching,
+cross-project leakage і bypass confirmation/policy через web routes.
+
+Визначити route/use-case matrix для project selection, dashboard/status,
+task/progress, question/answer, continue/stop, Git/diff/log, test, commit
+preview/confirmation та Bug Tracker read/write capabilities. Web route не може
+викликати нижчий privileged service, ніж еквівалентний Telegram flow.
+
+**Готово, коли:** ADR обирає framework/rendering/SSE approach і пояснює
+dependency/security trade-offs; threat model має mitigation для кожної межі;
+route matrix вказує auth, CSRF, fresh-auth і confirmation requirements без
+дублювання business logic у transport layer.
+
+### [ ] DEV-073 — Ввести channel-neutral actor і application use cases
+
+**Залежить від:** DEV-072. **Types/classes:** `ActorId`, `ActorContext`,
+application-level project/task/git/test/confirmation use cases, event hub.
+
+Прибрати Telegram numeric user ID та Telegram transport types із reusable
+project selection, pending question ownership, task ownership і confirmation
+boundaries. Ввести bounded canonical actor identity на кшталт
+`telegram:<numeric-id>` та `web:operator`, а для browser authorization додатково
+bind-ити sensitive pending action до opaque web session/security-context ID.
+Не використовувати client-supplied actor ID.
+
+Винести orchestration з Telegram handlers у transport-neutral use cases, щоб
+Telegram handlers і Web routes були тонкими adapters над однаковими validation,
+policy, concurrency, confirmation та error semantics. Додати process-local
+bounded `AgentEventHub`: task events мають owner/origin metadata, SSE subscriber
+не бачить events іншого actor/project, а Telegram progress reporting продовжує
+працювати без Web UI.
+
+Зробити versioned migration persisted active-project/confirmation records.
+Legacy numeric Telegram owners мають однозначно мігрувати в `telegram:<id>`.
+Pending web confirmation не переживає restart або auth-session rotation навіть
+якщо domain confirmations загалом persistent.
+
+**Готово, коли:** Telegram regression tests проходять через нові use cases;
+actor A не може читати/answer/confirm action actor B; migration зберігає чинні
+Telegram selections; fake Web adapter може пройти select → task → events →
+result без імпорту з `src/telegram`.
+
+### [ ] DEV-074 — Зробити Telegram і Web незалежно optional transports
+
+**Залежить від:** DEV-073. **Класи:** доповнення `AppConfig`/`ConfigLoader`,
+`ApplicationTransport`, refactor `Application` composition root.
+
+Додати explicit `TELEGRAM_ENABLED` і `WEB_ENABLED`. Для backward compatibility
+відсутній `TELEGRAM_ENABLED` з чинними Telegram variables зберігає сьогоднішню
+поведінку; web-only deployment явно задає `TELEGRAM_ENABLED=false` і не потребує
+`TELEGRAM_BOT_TOKEN` або `TELEGRAM_ALLOWED_USER_IDS`. Якщо Telegram enabled,
+обидві змінні залишаються mandatory та проходять ту саму validation. Якщо Web
+enabled, його auth/TLS config mandatory відповідно до environment/mode. Config
+із двома disabled transports відхиляється.
+
+`Application` має створювати список enabled transports, стартувати їх із
+rollback уже запущених при partial failure, а на SIGINT/SIGTERM ідемпотентно
+зупиняти HTTP/SSE acceptance, Telegram polling, active agents і storage у
+визначеному порядку. Web-only composition не створює `TelegramBot`, Telegram
+handlers/keyboards або Telegram `ProgressReporter`.
+
+**Готово, коли:** config/composition tests покривають legacy Telegram-only,
+explicit Telegram-only, Web-only без Telegram secrets, обидва transports,
+partial invalid config, обидва disabled, failure другого transport і graceful
+shutdown без leaked listener/process.
+
+### [ ] DEV-075 — Реалізувати password authentication і in-memory web sessions
+
+**Залежить від:** DEV-072, DEV-074. **Класи:** `PasswordVerifier`,
+`WebSessionStore`, `WebAuthService`, login/logout routes і password-hash CLI.
+
+Додати operator command, який читає password із hidden TTY/stdin, генерує
+versioned Argon2id або scrypt hash і друкує тільки verifier для вставлення у
+`WEB_PASSWORD_HASH`. Password не приймати CLI argument, не писати в shell
+history/log/storage і не повертати browser після submit. Валідувати algorithm,
+salt, parameters і bounded encoded length під час startup; verification має
+мати однакову generic failure response і safe comparison behavior.
+
+Login захистити per-source та global rate limits, bounded exponential delay,
+maximum concurrent verification, audit events без password/IP disclosure і
+однаковою відповіддю для malformed/wrong credential. Client IP брати з socket;
+proxy headers враховувати лише в explicit trusted reverse-proxy mode. Не
+блокувати назавжди єдиного operator: limits мають автоматично відновлюватися й
+мати documented local recovery через service restart/config change.
+
+Після login видати щонайменше 256-bit opaque session ID, rotate його при
+authentication, зберігати server-side лише process-local session state і
+надсилати cookie `__Host-...; Secure; HttpOnly; SameSite=Strict; Path=/` без
+`Domain`. Встановити idle та absolute TTL, bounded sessions, logout/revoke-all,
+constant-time lookup where practical і cleanup expired sessions. Session/token
+не зберігати у `localStorage`, URL, logs або `JsonStorage`; logout надсилає
+`Clear-Site-Data` і `Cache-Control: no-store`.
+
+**Готово, коли:** tests покривають correct/wrong/malformed hash, timing-safe
+verification boundary, rate limiting, session fixation/rotation, idle/absolute
+expiry, logout, restart revocation, cookie attributes, bounded session cleanup
+і redaction; жоден test capture не містить plaintext password/session ID.
+
+### [ ] DEV-076 — Реалізувати HTTPS-only production WebServer
+
+**Залежить від:** DEV-074–075. **Клас:** `WebServer`, TLS/proxy configuration,
+security middleware.
+
+У `direct` mode читати certificate/key лише з validated absolute paths,
+відхиляти unreadable/invalid certificate, encrypted key без configured flow та
+private key, доступний group/others. Не запускати окремий plaintext redirect
+listener. У `reverse-proxy` mode дозволити тільки loopback address або Unix
+socket; не дозволяти `0.0.0.0`, LAN bind чи forwarded headers від недовіреного
+peer. Exact HTTPS `WEB_PUBLIC_URL` визначає allowed Host/Origin і URL generation.
+
+Production startup має fail closed, якщо request path до browser може бути
+plain HTTP. Development HTTP потребує explicit environment flag, bind-иться
+лише на loopback, показує warning і не може reuse production cookie/config
+profile. Додати HSTS у production (без автоматичного `includeSubDomains`),
+Content-Security-Policy без inline/eval/remote sources, `frame-ancestors 'none'`,
+`X-Content-Type-Options: nosniff`, restrictive Referrer/Permissions policies та
+`Cache-Control: no-store` для auth/API/sensitive HTML.
+
+Встановити allowlisted methods/content types, JSON/form/body/header/URL limits,
+request/header/keep-alive timeouts, connection/SSE caps та graceful drain.
+CORS не вмикати: API є same-origin. Unauthenticated health endpoint, якщо
+потрібний systemd/proxy, повертає лише bounded liveness без version, paths,
+projects, model/provider або readiness secrets.
+
+**Готово, коли:** integration tests доводять direct TLS, trusted loopback proxy,
+Host/Origin validation і security headers; production відмовляється стартувати
+з HTTP/public bind, missing TLS, insecure key permissions або spoofed forwarded
+headers; slow/oversized/malformed requests bounded і не блокують shutdown.
+
+### [ ] DEV-077 — Реалізувати authenticated Web dashboard та read/task flow
+
+**Залежить від:** DEV-073, DEV-075–076.
+
+Додати responsive same-origin UI з local assets для login, project selection,
+dashboard, status, task input, live progress, final result, question/answer,
+continue/stop, Git status/diff, tests, task log і read-only Issue Tracker.
+Server/API віддає тільки normalized view models: не exposing canonical local
+paths, credentials, full env, raw exceptions, raw reasoning або unrestricted
+command output. Встановити ті самі bounded text/diff/log limits, що й для
+Telegram, із download лише через authenticated one-shot/bounded response.
+
+Для live updates використати authenticated same-origin SSE з heartbeat,
+disconnect cleanup, per-session/project authorization, connection cap і
+bounded replay cursor. Browser reconnect не повинен повторно запускати task або
+mutation. Task POST повертає opaque task/run reference, а events фільтруються
+server-side за actor/project. UI не використовує `innerHTML` для untrusted
+agent/Git/issue content; Markdown або не render-иться, або проходить strict
+allowlist sanitizer без raw HTML/URLs.
+
+Усі state-changing routes використовують non-GET methods, exact Origin check,
+session-bound synchronizer CSRF token і expected content type. `SameSite` cookie
+є лише defense in depth, не заміна CSRF validation. Unknown fields відхиляються
+runtime schemas; project/provider/path/command executable не приймаються з
+browser, а вирішуються з operator-owned config.
+
+**Готово, коли:** route/UI tests проходять login → select → task → progress →
+question/answer → result, continue/stop, diff/test/log та read-only issue flow;
+refresh/SSE reconnect не дублює operation; unauthorized/cross-project/CSRF/
+wrong-origin requests не викликають service side effects; XSS fixtures
+відображаються як inert text.
+
+### [ ] DEV-078 — Додати Web confirmations і step-up authentication
+
+**Залежить від:** DEV-073, DEV-077.
+
+Реалізувати exact preview та Allow once/Deny для confirmation-required
+operations, включно з commit та agent-authored issue creation. Web confirmation
+bind-иться до actor, project, operation payload hash, auth session/security
+context, CSRF token і short expiry; project switch, logout, password verifier
+change, session rotation, restart або replay роблять її invalid. Preview та
+execute використовують один immutable server-side payload; browser не може
+підмінити commit message, issue body, repository або provider після preview.
+
+Для commit і зовнішньої write mutation вимагати fresh authentication: session
+має бути не старша configured short interval або operator повторно вводить
+password у step-up form. Password перевіряється тим самим verifier, не
+persist-иться й не стає частиною confirmation record. Deny/expired/stale request
+не має side effects. Automatic retry ambiguous external write заборонений так
+само, як у Telegram flow.
+
+**Готово, коли:** integration/security tests покривають allow/deny, wrong actor/
+project/session, CSRF, stale preview, payload tampering, expiry, replay, logout,
+restart, password rotation, fresh-auth expiry і concurrent tabs; Telegram і Web
+викликають одну operation policy/confirmation implementation.
+
+### [ ] DEV-079 — Провести Web security і resilience regression review
+
+**Залежить від:** DEV-075–078.
+
+Додати focused tests для password brute force/resource exhaustion, session
+fixation/theft boundary, CSRF, reflected/stored/DOM XSS, CSP, clickjacking,
+Host-header/proxy spoofing, method/content-type confusion, cache leakage,
+oversized/slow requests, SSE fan-out/reconnect storms, cross-project/actor data
+leakage та shutdown із active HTTP/SSE/agent operations. Перевірити dependency
+audit і production error responses без stack/path/config disclosure.
+
+Усі state-changing Web API paths мають пройти authorization-policy matrix:
+authenticated session недостатня для forbidden operation, а UI-hidden control
+не є authorization boundary. Перевірити, що Web не додає arbitrary shell, file,
+URL/provider або generic HTTP escape hatch і не послаблює наявний Codex sandbox.
+Password hash, session/CSRF tokens, TLS private key material, Telegram/GitHub/
+model credentials не повинні потрапити в browser bundle, HTML, API, SSE, logs,
+storage, diagnostics чи crash errors.
+
+**Готово, коли:** focused Web security suite зелений; route inventory не має
+unclassified endpoint; dependency/license findings задокументовані; fault
+injection не залишає listener, session, confirmation, subscriber або agent lock;
+`npm run build`, full tests і existing security suite проходять.
+
+### [ ] DEV-080 — Deployment docs і live Web-only acceptance
+
+**Залежить від:** DEV-079.
+
+Оновити README, `.env.example`, architecture/security/acceptance docs і systemd
+assets. Документувати password-hash generation/rotation/recovery, `.env` mode
+`0600`, direct certificate/key deployment і renewal, loopback reverse-proxy
+setup, firewall, HSTS, session expiry/restart behavior, Telegram optional mode,
+backup/update/rollback і troubleshooting без виведення secrets. Додати
+production-ready example для direct TLS та один minimal HTTPS reverse proxy;
+example hostnames/password hashes/certificates не можуть бути придатними
+production credentials.
+
+Провести live acceptance у реальному browser/mobile viewport:
+
+- `WEB_ENABLED=true`, `TELEGRAM_ENABLED=false`, Telegram token/user IDs повністю
+  відсутні — application стартує й виконує повний agent flow;
+- production direct TLS або trusted HTTPS reverse proxy приймає browser тільки
+  через valid HTTPS, а HTTP/public backend/proxy spoofing відхиляються;
+- wrong-password throttling, login/logout, cookie/session expiry, restart
+  revocation, CSRF rejection і fresh-auth confirmation працюють;
+- project select, task/progress/question/answer/result, stop, diff/test/log,
+  commit deny/allow та issue read/write policy проходять без Telegram;
+- Telegram-only legacy flow і simultaneous Web+Telegram flow не мають
+  regressions або cross-channel event/confirmation leakage.
+
+**Готово, коли:** Web-only production acceptance не використовує Telegram
+credentials, client-facing traffic підтверджено тільки HTTPS, security headers
+і cookies перевірені browser/network inspection, full build/test/security gates
+зелені, а всі deviations оформлені окремими tasks.
+
+---
+
 Issue history and defect verification are tracked separately in `issues.md`.
 
 ## Контрольні точки
@@ -1085,13 +1623,24 @@ Issue history and defect verification are tracked separately in `issues.md`.
   live read-only acceptance.
 - **Після DEV-064:** agent може запропонувати й після explicit confirmation
   створити bounded issue у configured tracker без доступу до довільних writes.
+- **Після DEV-071:** один typed provider config підтримує OpenAI, Ollama,
+  LM Studio і compatible remote `llama.cpp`; session identity ізольована, а
+  live local-runtime matrix задокументована.
+- **Після DEV-080:** gateway проходить Web-only production acceptance без
+  Telegram secrets, підтримує optional Telegram/Web transports і віддає Web UI
+  лише через validated HTTPS deployment із password/session/CSRF protections.
 - **Після DEV-057—062:** повторна DEV-048 acceptance не має
   encoding/stop/test-output/question-flow regressions; details у `issues.md`.
 
 ## Поза поточним scope
 
-- Web UI, Docker і керування IntelliJ GUI.
-- Власний LLM agent замість реального Codex.
+- Docker і керування IntelliJ GUI.
+- Власний LLM tool loop замість реального Codex; local models у Phase 8
+  використовуються тільки як Codex inference providers.
+- Автоматичний model routing/fallback за prompt, latency або quality; provider
+  обирається operator-owned project config.
+- Multi-user accounts, roles, OAuth/OIDC, password reset email і persistent web
+  sessions; Phase 9 має одного operator та process-local sessions.
 - PostgreSQL до появи реальної потреби в ньому.
 - Автоматичні `git push`, `reset --hard`, `clean` або discard changes.
 - Доступ Telegram-користувача до довільної файлової системи чи shell command.
