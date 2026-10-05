@@ -1,9 +1,12 @@
 import type { ProjectConfig } from "../config/ProjectConfig.js";
+import type { ModelProviderMap } from "../config/ProjectConfig.js";
+import { createAgentIdentity, legacyOpenAiAgentIdentity, type AgentIdentity } from "../domain/AgentIdentity.js";
 import type { AgentSession, PendingAgentQuestion } from "../domain/AgentSession.js";
 import type { PersistedPendingQuestion, PersistedSessionRecord, Storage } from "../storage/Storage.js";
 
 export interface SessionProjectRegistry {
   require(projectId: string): ProjectConfig;
+  modelProviders?(): ModelProviderMap;
 }
 
 export interface SessionManagerOptions {
@@ -12,7 +15,8 @@ export interface SessionManagerOptions {
 
 export type SessionManagerErrorCode =
   | "SESSION_PROJECT_MISMATCH"
-  | "SESSION_REPOSITORY_MISMATCH";
+  | "SESSION_REPOSITORY_MISMATCH"
+  | "SESSION_AGENT_IDENTITY_MISMATCH";
 
 export class SessionManagerError extends Error {
   public readonly code: SessionManagerErrorCode;
@@ -52,6 +56,7 @@ export class SessionManager {
     let record = (await this.#storage.load()).sessions[project.id];
     if (record === undefined) return undefined;
     this.#assertRecordBelongsToProject(record, project);
+    record = await this.#reconcileIdentity(record, project);
 
     // A process cannot still be running after this manager has been recreated.
     if (record.state === "RUNNING") {
@@ -72,6 +77,7 @@ export class SessionManager {
       record = (await this.#storage.load()).sessions[project.id];
       if (record === undefined) return undefined;
       this.#assertRecordBelongsToProject(record, project);
+      record = await this.#reconcileIdentity(record, project);
     }
 
     return toAgentSession(record);
@@ -84,24 +90,59 @@ export class SessionManager {
       let changed = false;
       const sessions = Object.fromEntries(Object.entries(state.sessions).map(([projectId, session]) => {
         if (session.state !== "RUNNING") return [projectId, session];
-        const project = this.#projects.require(projectId);
-        this.#assertRecordBelongsToProject(session, project);
+      const project = this.#projects.require(projectId);
+      this.#assertRecordBelongsToProject(session, project);
         changed = true;
         return [projectId, { ...session, state: "FAILED" as const, updatedAt: reconciledAt }];
       }));
       return changed ? { ...state, sessions } : state;
     });
+    const state = await this.#storage.load();
+    for (const [projectId, record] of Object.entries(state.sessions)) {
+      const project = this.#projects.require(projectId);
+      this.#assertRecordBelongsToProject(record, project);
+      await this.#reconcileIdentity(record, project);
+    }
   }
 
   public async saveSession(session: AgentSession): Promise<void> {
     const project = this.#projects.require(session.projectId);
     this.#assertSessionBelongsToProject(session, project);
-    const record = toPersistedSession(session);
+    const record = toPersistedSession(session, this.#identity(project));
 
     await this.#storage.update((state) => ({
       ...state,
       sessions: { ...state.sessions, [project.id]: record },
     }));
+  }
+
+  async #reconcileIdentity(
+    record: PersistedSessionRecord,
+    project: ProjectConfig,
+  ): Promise<PersistedSessionRecord> {
+    const currentIdentity = this.#identity(project);
+    if (sameIdentity(record.agentIdentity, currentIdentity)) return record;
+
+    const now = this.#clock().toISOString();
+    const { threadId: _threadId, pendingQuestion: _pendingQuestion, ...withoutOldThread } = record;
+    const migrated: PersistedSessionRecord = {
+      ...withoutOldThread,
+      state: "FAILED",
+      agentIdentity: currentIdentity,
+      resumable: false,
+      ...(record.threadId === undefined ? {} : { historicalThreadId: record.threadId }),
+      resumeDiagnostic: "AGENT_IDENTITY_CHANGED",
+      updatedAt: now,
+    };
+    await this.#storage.update((state) => ({
+      ...state,
+      sessions: { ...state.sessions, [project.id]: migrated },
+    }));
+    return migrated;
+  }
+
+  #identity(project: ProjectConfig): AgentIdentity {
+    return createAgentIdentity(project, this.#projects.modelProviders?.());
   }
 
   #assertSessionBelongsToProject(session: AgentSession, project: ProjectConfig): void {
@@ -142,7 +183,7 @@ export class SessionManager {
   }
 }
 
-function toPersistedSession(session: AgentSession): PersistedSessionRecord {
+function toPersistedSession(session: AgentSession, fallbackIdentity: AgentIdentity): PersistedSessionRecord {
   return {
     projectId: session.projectId,
     projectPath: session.projectPath,
@@ -153,6 +194,10 @@ function toPersistedSession(session: AgentSession): PersistedSessionRecord {
       ? {}
       : { pendingQuestion: toPersistedQuestion(session.pendingQuestion) }),
     updatedAt: session.updatedAt,
+    agentIdentity: session.agentIdentity ?? fallbackIdentity,
+    ...(session.resumable === undefined ? {} : { resumable: session.resumable }),
+    ...(session.historicalThreadId === undefined ? {} : { historicalThreadId: session.historicalThreadId }),
+    ...(session.resumeDiagnostic === undefined ? {} : { resumeDiagnostic: session.resumeDiagnostic }),
   };
 }
 
@@ -167,7 +212,19 @@ function toAgentSession(record: PersistedSessionRecord): AgentSession {
       ? {}
       : { pendingQuestion: toAgentQuestion(record.pendingQuestion) }),
     updatedAt: record.updatedAt,
+    agentIdentity: record.agentIdentity ?? legacyOpenAiAgentIdentity(),
+    ...(record.resumable === undefined ? {} : { resumable: record.resumable }),
+    ...(record.historicalThreadId === undefined ? {} : { historicalThreadId: record.historicalThreadId }),
+    ...(record.resumeDiagnostic === undefined ? {} : { resumeDiagnostic: record.resumeDiagnostic }),
   });
+}
+
+function sameIdentity(left: AgentIdentity | undefined, right: AgentIdentity): boolean {
+  if (left === undefined) return sameIdentity(legacyOpenAiAgentIdentity(), right);
+  return left.adapterKind === right.adapterKind &&
+    left.providerId === right.providerId &&
+    left.modelId === right.modelId &&
+    left.providerFingerprint === right.providerFingerprint;
 }
 
 function toPersistedQuestion(question: PendingAgentQuestion): PersistedPendingQuestion {

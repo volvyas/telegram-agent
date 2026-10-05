@@ -1,5 +1,43 @@
 # Live acceptance
 
+## DEV-071 — partial live acceptance (2026-10-05)
+
+Status: **PARTIAL — remote `llama.cpp` provider/SDK path passed; full Telegram
+matrix remains open.** The operator supplied only the LAN `llama.cpp` endpoint.
+No Ollama or LM Studio service, authorized Telegram acceptance session, or
+cloud-provider acceptance credential was supplied, so those cells are `N/A`
+rather than inferred passes.
+
+The run used a fresh disposable Git repository and isolated `CODEX_HOME`.
+Evidence contains only sanitized identifiers, event classifications, counts and
+durations; prompts, file contents, response bodies, thread IDs, tokens and raw
+reasoning were not retained. Runtime was `llama.cpp` build
+`b11370-bed0a8566`; `/version` returned `404`, while `/props` exposed that build
+identifier. Model was `Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf`, IQ1_S,
+with a 32,768-token runtime context.
+
+| Capability | Ollama | LM Studio | `llama.cpp` | Sanitized evidence |
+|---|---|---|---|---|
+| Provider/model detection | N/A | N/A | PASS | `/health` ok; exact model discovered; bounded diagnostic passed discovery, Responses SSE, tool call and continuation |
+| Repository read | N/A | N/A | PASS | Post-restart turn read the disposable fixture; one command completed with exit 0 |
+| Harmless command | N/A | N/A | PASS | First turn produced three completed command events, no failed command |
+| Small file patch | N/A | N/A | PASS | Exact eight-byte, newline-terminated fixture was verified by the harness; Git reported only that disposable file |
+| Completion | N/A | N/A | PASS | First turn emitted terminal `completed`; required marker observed; no fatal error |
+| Second-turn resume | N/A | N/A | PASS | Same thread resumed and completed after client reconstruction; required context marker observed |
+| `/stop` | N/A | N/A | N/A | Live adapter/SDK cancellation reached `stopped` with no command or fatal error, but Telegram `/stop` was not exercised |
+| Gateway restart | N/A | N/A | N/A | Fresh adapter and persisted `CODEX_HOME` resumed successfully, but a real gateway process restart was not exercised |
+| Project switching | N/A | N/A | N/A | No cloud credential or second live provider was supplied |
+| First-token / turn duration | N/A | N/A | PASS | Direct SSE first output: 4.306 s; bounded direct turn: 4.734 s; full tool turn: 125.050 s; resumed turn: 22.598 s |
+
+The live runner is `npm run accept:dev071`. It uses the real Codex SDK/bundled
+CLI, reconstructs the adapter before resume, validates the exact disposable
+fixture, checks terminal markers and command outcomes, and exercises immediate
+cancellation. Each completed Codex turn also emitted one recoverable item error
+before `run_started`; it did not prevent commands, markers or completion and is
+tracked separately as DEV-081. This run does not satisfy DEV-071's required
+Telegram → gateway → Codex → model → tools → result flow, so DEV-071 remains
+open.
+
 ## DEV-056 — GitHub read-only acceptance, 2026-09-30
 
 Статус: **PASS — DEV-063 виправлено й перевірено live**.

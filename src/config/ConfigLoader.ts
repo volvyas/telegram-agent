@@ -9,7 +9,10 @@ import {
   type LogLevel,
 } from "./AppConfig.js";
 import { IssueTrackerSecrets } from "./IssueTrackerConfig.js";
-import type { ProjectConfig } from "./ProjectConfig.js";
+import type {
+  ModelProviderMap,
+  ProjectConfig,
+} from "./ProjectConfig.js";
 
 const DEFAULT_PROJECTS_CONFIG = "./projects.json";
 const DEFAULT_LOG_LEVEL: LogLevel = "info";
@@ -17,6 +20,26 @@ const DEFAULT_LOG_LEVEL: LogLevel = "info";
 export interface ProcessConfigLoaderOptions {
   readonly cwd?: string;
   readonly envFilePath?: string;
+}
+
+export class ModelProviderSecrets {
+  readonly #apiKeys: ReadonlyMap<string, string>;
+
+  public constructor(apiKeys: ReadonlyMap<string, string>) {
+    this.#apiKeys = new Map(apiKeys);
+  }
+
+  public getApiKey(providerId: string): string | undefined {
+    return this.#apiKeys.get(providerId);
+  }
+
+  public redactionValues(): readonly string[] {
+    return Object.freeze([...this.#apiKeys.values()]);
+  }
+
+  public toJSON(): Record<string, never> {
+    return {};
+  }
 }
 
 export class ConfigLoader {
@@ -103,6 +126,24 @@ export class ConfigLoader {
         { cause: error, variableName: "PROJECTS_CONFIG" },
       );
     }
+  }
+
+  /** Resolves provider credentials without adding them to typed project config. */
+  public loadModelProviderSecrets(providers: ModelProviderMap): ModelProviderSecrets {
+    const apiKeys = new Map<string, string>();
+    for (const [providerId, provider] of providers) {
+      if (provider.type !== "responses" || provider.apiKeyEnv === undefined) continue;
+      const value = this.#environment[provider.apiKeyEnv]?.trim();
+      if (value === undefined || value.length === 0) {
+        throw new ConfigError(
+          "MODEL_PROVIDER_CREDENTIAL_REQUIRED",
+          `Required model provider credential for ${providerId} is missing`,
+          { variableName: provider.apiKeyEnv },
+        );
+      }
+      apiKeys.set(providerId, value);
+    }
+    return new ModelProviderSecrets(apiKeys);
   }
 
   /** Resolves tracker credentials after project configuration has been validated. */

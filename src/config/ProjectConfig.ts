@@ -14,6 +14,39 @@ export const ALLOWED_OPERATIONS = [
 
 export type AllowedOperation = (typeof ALLOWED_OPERATIONS)[number];
 
+export const CODEX_BUILTIN_PROVIDERS = ["openai", "ollama", "lmstudio"] as const;
+export type CodexBuiltinProvider = (typeof CODEX_BUILTIN_PROVIDERS)[number];
+
+export interface CodexBuiltinProviderConfig {
+  readonly type: "codex-builtin";
+  readonly provider: CodexBuiltinProvider;
+}
+
+export interface ResponsesProviderConfig {
+  readonly type: "responses";
+  readonly name: string;
+  readonly baseUrl: string;
+  readonly wireApi: "responses";
+  readonly apiKeyEnv?: string;
+}
+
+export type ModelProviderConfig =
+  | CodexBuiltinProviderConfig
+  | ResponsesProviderConfig;
+
+export type ModelProviderMap = ReadonlyMap<string, ModelProviderConfig>;
+
+export interface ProjectAgentConfig {
+  readonly provider: string;
+  readonly model: string;
+}
+
+export const MODEL_PROVIDER_RUNTIME_DEFAULTS = Object.freeze({
+  requestRetries: 2,
+  streamRetries: 2,
+  idleTimeoutMs: 30_000,
+} as const);
+
 export interface ProjectCommand {
   readonly executable: string;
   readonly args: readonly string[];
@@ -25,6 +58,7 @@ export interface ProjectConfig {
   readonly path: string;
   /** Optional project-specific Codex profile; otherwise the app default is used. */
   readonly codexHome?: string;
+  readonly agent?: ProjectAgentConfig;
   readonly allowedOperations: ReadonlySet<AllowedOperation>;
   readonly testCommand?: ProjectCommand;
   readonly buildCommand?: ProjectCommand;

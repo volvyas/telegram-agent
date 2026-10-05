@@ -45,6 +45,41 @@ application typed API. Це стабільніше для нашого TypeScrip
 | Structured final output | `outputSchema` | completion/question envelope |
 | Session location | `~/.codex/sessions`, global `CODEX_HOME` або project `codexHome` | persist лише thread ID у gateway storage; each project uses its resolved profile |
 
+Починаючи з DEV-067, provider configuration передається до SDK явно для
+кожного project через `Codex` constructor `config`, а не записується у shared
+`CODEX_HOME/config.toml`. Built-in provider мапиться на `model_provider`, а
+generic Responses provider — на isolated `model_providers.<id>` із `base_url`,
+`wire_api = "responses"` і optional `env_key`. Project `agent.model` передається
+явно у new/resumed thread. Missing `agent` зберігає legacy OpenAI behavior.
+
+Child environment залишається allowlisted: для custom provider додається лише
+одна referenced credential environment variable. Значення credential не входить
+у provider config, typed project config, storage або error messages; воно
+додається до logger redaction.
+
+## Provider diagnostics
+
+Remote provider availability is never a startup dependency. The gateway can
+start with an offline inference host, and status/stop/configuration paths do not
+perform a health check. An operator can run the explicit bounded probe:
+
+```bash
+PROBE_PROVIDER_ID=home-llama \
+PROBE_BASE_URL=http://192.168.1.179:8080/v1 \
+PROBE_MODEL=<configured-model> \
+npm run probe:provider
+```
+
+The probe uses only the configured Responses endpoint. `/models` is recorded as
+an optional discovery signal, not compatibility proof. A successful result also
+requires incremental Responses SSE with `response.completed`, one harmless
+function call, and a second turn using the complete function-call history. Input,
+output, and time are bounded; no repository or workspace tools are supplied.
+Typed failures distinguish network unreachable, timeout, TLS, authentication,
+unknown model, malformed or incomplete SSE, invalid tool call, and protocol
+mismatch. Output contains only provider/model identifiers and safe codes; raw
+provider bodies, URL credentials, API keys, and prompts are not emitted.
+
 Локальний smoke test додатково підтвердив JSONL streaming, thread ID, exit code
 `0` і resume конкретного session ID.
 

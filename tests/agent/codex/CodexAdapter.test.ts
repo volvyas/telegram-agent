@@ -67,6 +67,34 @@ describe("CodexAdapter", () => {
     expect(adapter.getThreadId("motor")).toBe("THREAD-1");
   });
 
+  it("propagates the resolved model while retaining locked-down thread options", async () => {
+    const thread = new FakeThread(completedEvents);
+    const client = new FakeClient(thread);
+    const adapter = new CodexAdapter({
+      client,
+      provider: {
+        providerId: "local",
+        model: "qwen-coder",
+        config: { model_provider: "local" },
+      },
+    });
+
+    const run = await adapter.start({
+      projectId: "motor",
+      workingDirectory: "/projects/motor",
+      prompt: "Run",
+    });
+    await collect(run.events);
+
+    expect(client.startCalls[0]).toMatchObject({
+      model: "qwen-coder",
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never",
+      networkAccessEnabled: false,
+      webSearchMode: "disabled",
+    });
+  });
+
   it("treats a structured question as the terminal outcome of the stream", async () => {
     const thread = new FakeThread([
       { type: "thread.started", thread_id: "THREAD-1" },
@@ -316,6 +344,17 @@ describe("createCodexEnvironment", () => {
       CODEX_HOME: "/var/lib/codex-remote/codex-home",
     });
     expect(environment).not.toHaveProperty("SECRET_VALUE");
+  });
+
+  it("adds only the referenced provider credential to the child environment", () => {
+    const environment = createCodexEnvironment(
+      { PATH: "/usr/bin", OTHER_SECRET: "must-not-pass" },
+      undefined,
+      { environmentName: "LOCAL_MODEL_KEY", value: "model-secret" },
+    );
+
+    expect(environment).toMatchObject({ PATH: "/usr/bin", LOCAL_MODEL_KEY: "model-secret" });
+    expect(environment).not.toHaveProperty("OTHER_SECRET");
   });
 
   it("rejects a relative CODEX_HOME without echoing it", () => {

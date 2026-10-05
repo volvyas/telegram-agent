@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   STORAGE_SCHEMA_VERSION,
+  LEGACY_STORAGE_SCHEMA_VERSION,
   StorageError,
   createEmptyPersistedState,
   type PersistedState,
@@ -11,6 +12,7 @@ import {
   type StorageErrorCode,
   type StorageUpdate,
 } from "./Storage.js";
+import { legacyOpenAiAgentIdentity } from "../domain/AgentIdentity.js";
 
 const AGENT_STATES = new Set([
   "IDLE",
@@ -62,7 +64,7 @@ export class JsonStorage implements Storage {
   public update(mutator: StorageUpdate): Promise<void> {
     return this.#enqueue(async () => {
       const current = await this.#ensureLoaded();
-      const candidate = mutator(cloneAndFreeze(current));
+      const candidate = normalizeLegacySessionIdentities(mutator(cloneAndFreeze(current)));
       assertPersistedState(candidate);
       await this.#writeAtomically(candidate);
       this.#state = cloneAndFreeze(candidate);
@@ -118,26 +120,37 @@ export class JsonStorage implements Storage {
         cause: error,
       });
     }
+    const shouldMigrateLegacy = isRecord(document) &&
+      document.schemaVersion === LEGACY_STORAGE_SCHEMA_VERSION;
     if (isRecord(document) && typeof document.schemaVersion === "number" &&
-        document.schemaVersion !== STORAGE_SCHEMA_VERSION) {
+        document.schemaVersion !== STORAGE_SCHEMA_VERSION &&
+        document.schemaVersion !== LEGACY_STORAGE_SCHEMA_VERSION) {
       throw new JsonStorageError(
         "STORAGE_UNSUPPORTED_VERSION",
         `Storage schema version ${String(document.schemaVersion)} is not supported`,
       );
     }
     try {
-      // DEV-035 state files predate confirmations. Keep schema v1 readable and
+      if (isRecord(document) && document.schemaVersion === LEGACY_STORAGE_SCHEMA_VERSION) {
+        document = migrateSchemaV1(document);
+      }
+      // DEV-035 state files predate confirmations. Keep old files readable and
       // normalize the new collection before validating the document.
       if (isRecord(document) && document.confirmations === undefined) {
         document = { ...document, confirmations: [] };
       }
+      document = normalizeLegacySessionIdentities(document);
       assertPersistedState(document);
     } catch (error) {
       throw new JsonStorageError("STORAGE_DAMAGED", "Storage state has an invalid shape", {
         cause: error,
       });
     }
-    this.#state = cloneAndFreeze(document);
+    const migrated = cloneAndFreeze(document);
+    if (shouldMigrateLegacy) {
+      await this.#writeAtomically(migrated);
+    }
+    this.#state = migrated;
     return this.#state;
   }
 
@@ -219,6 +232,10 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
     if (session.threadId !== undefined) assertNonEmptyString(session.threadId);
     if (session.startedAt !== undefined) assertTimestamp(session.startedAt);
     assertTimestamp(session.updatedAt);
+    assertAgentIdentity(session.agentIdentity);
+    if (session.resumable !== undefined) assert(typeof session.resumable === "boolean", "invalid session resumable flag");
+    if (session.historicalThreadId !== undefined) assertNonEmptyString(session.historicalThreadId);
+    if (session.resumeDiagnostic !== undefined) assert(session.resumeDiagnostic === "AGENT_IDENTITY_CHANGED", "invalid session diagnostic");
     if (session.pendingQuestion !== undefined) {
       const question = session.pendingQuestion;
       assert(isRecord(question), "invalid pending question");
@@ -265,6 +282,38 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
     assertTimestamp(confirmation.expiresAt);
     assert(new Date(confirmation.expiresAt).valueOf() > new Date(confirmation.createdAt).valueOf(), "invalid confirmation expiry");
   }
+}
+
+function assertAgentIdentity(value: unknown): void {
+  assert(isRecord(value), "invalid agent identity");
+  assert(value.adapterKind === "codex", "invalid agent adapter kind");
+  assertNonEmptyString(value.providerId);
+  assert(typeof value.modelId === "string", "invalid agent model ID");
+  assert(/^[a-f0-9]{64}$/u.test(value.providerFingerprint as string), "invalid provider fingerprint");
+}
+
+function migrateSchemaV1(document: Record<string, unknown>): Record<string, unknown> {
+  const sessions = isRecord(document.sessions)
+    ? Object.fromEntries(Object.entries(document.sessions).map(([projectId, value]) => {
+        if (!isRecord(value)) return [projectId, value];
+        return [projectId, {
+          ...value,
+          agentIdentity: legacyOpenAiAgentIdentity(),
+          resumable: true,
+        }];
+      }))
+    : document.sessions;
+  return { ...document, schemaVersion: STORAGE_SCHEMA_VERSION, sessions };
+}
+
+function normalizeLegacySessionIdentities(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.sessions)) return value;
+  const legacyIdentity = legacyOpenAiAgentIdentity();
+  const sessions = Object.fromEntries(Object.entries(value.sessions).map(([projectId, session]) => {
+    if (!isRecord(session) || session.agentIdentity !== undefined) return [projectId, session];
+    return [projectId, { ...session, agentIdentity: legacyIdentity, resumable: true }];
+  }));
+  return { ...value, sessions };
 }
 
 function assertTestSummary(value: unknown): void {

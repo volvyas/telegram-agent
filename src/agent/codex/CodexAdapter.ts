@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 
-import { Codex, type ThreadEvent } from "@openai/codex-sdk";
+import type { ThreadEvent } from "@openai/codex-sdk";
 
 import type {
   AgentMessageOptions,
@@ -15,6 +15,11 @@ import {
   CodexEventMapper,
   type CodexDiagnostic,
 } from "./CodexEventMapper.js";
+import {
+  CodexClientFactory,
+  type CodexClientFactoryPort,
+} from "./CodexClientFactory.js";
+import type { ProviderCredential, ResolvedCodexProvider } from "./ModelProviderResolver.js";
 
 const CODEX_ENVIRONMENT_ALLOWLIST = [
   "HOME",
@@ -38,6 +43,7 @@ export interface SafeCodexThreadOptions {
   readonly webSearchMode: "disabled";
   readonly skipGitRepoCheck: false;
   readonly additionalDirectories: readonly string[];
+  readonly model?: string;
 }
 
 export interface CodexThreadPort {
@@ -62,6 +68,8 @@ export interface CodexAdapterOptions {
   readonly idFactory?: () => string;
   readonly clock?: () => Date;
   readonly onDiagnostic?: (diagnostic: CodexDiagnostic) => void;
+  readonly provider?: ResolvedCodexProvider;
+  readonly clientFactory?: CodexClientFactoryPort;
 }
 
 export class CodexAdapterError extends Error {
@@ -84,6 +92,7 @@ export class CodexAdapter implements CodingAgent {
   readonly #idFactory: () => string;
   readonly #clock: () => Date;
   readonly #onDiagnostic: ((diagnostic: CodexDiagnostic) => void) | undefined;
+  readonly #provider: ResolvedCodexProvider;
   readonly #activeRuns = new Map<string, ActiveRun>();
   readonly #threadIds = new Map<string, string>();
 
@@ -91,12 +100,15 @@ export class CodexAdapter implements CodingAgent {
     this.#idFactory = options.idFactory ?? randomUUID;
     this.#clock = options.clock ?? (() => new Date());
     this.#onDiagnostic = options.onDiagnostic;
+    this.#provider = options.provider ?? defaultCodexProvider();
     this.#client =
       options.client ??
-      new SdkCodexClient(
-        createCodexEnvironment(options.environment ?? process.env, options.codexHome),
-        options.protectedPaths ?? [],
-      );
+      (options.clientFactory ?? new CodexClientFactory()).create({
+        environment: options.environment ?? process.env,
+        ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),
+        protectedPaths: options.protectedPaths ?? [],
+        provider: this.#provider,
+      });
   }
 
   public start(options: AgentStartOptions): Promise<AgentRun> {
@@ -142,7 +154,7 @@ export class CodexAdapter implements CodingAgent {
 
   #createThread(workingDirectory: string): CodexThreadPort {
     try {
-      return this.#client.startThread(createThreadOptions(workingDirectory));
+      return this.#client.startThread(createThreadOptions(workingDirectory, this.#provider.model));
     } catch (error) {
       throw new CodexAdapterError(
         "CODEX_THREAD_CREATE_FAILED",
@@ -154,7 +166,7 @@ export class CodexAdapter implements CodingAgent {
 
   #resumeThread(threadId: string, workingDirectory: string): CodexThreadPort {
     try {
-      return this.#client.resumeThread(threadId, createThreadOptions(workingDirectory));
+      return this.#client.resumeThread(threadId, createThreadOptions(workingDirectory, this.#provider.model));
     } catch (error) {
       throw new CodexAdapterError(
         "CODEX_THREAD_RESUME_FAILED",
@@ -334,45 +346,10 @@ async function nextOrAbort<T>(
   });
 }
 
-class SdkCodexClient implements CodexClientPort {
-  readonly #client: Codex;
-
-  public constructor(
-    environment: Readonly<Record<string, string>>,
-    protectedPaths: readonly string[],
-  ) {
-    this.#client = new Codex({
-      env: { ...environment },
-      configOverrides: [createFilesystemPolicy(protectedPaths)],
-    });
-  }
-
-  public startThread(options: SafeCodexThreadOptions): CodexThreadPort {
-    return this.#client.startThread(toSdkThreadOptions(options));
-  }
-
-  public resumeThread(
-    threadId: string,
-    options: SafeCodexThreadOptions,
-  ): CodexThreadPort {
-    return this.#client.resumeThread(threadId, toSdkThreadOptions(options));
-  }
-}
-
-function createFilesystemPolicy(protectedPaths: readonly string[]): string {
-  const entries = [
-    [":root", "read"],
-    ...protectedPaths.map((path) => [path, "deny"] as const),
-  ];
-  const filesystem = entries
-    .map(([path, permission]) => `${JSON.stringify(path)}=${JSON.stringify(permission)}`)
-    .join(",");
-  return `permissions.audit.filesystem={${filesystem}}`;
-}
-
 export function createCodexEnvironment(
   source: NodeJS.ProcessEnv,
   explicitCodexHome?: string,
+  credential?: ProviderCredential,
 ): Readonly<Record<string, string>> {
   const environment: Record<string, string> = {};
   for (const name of CODEX_ENVIRONMENT_ALLOWLIST) {
@@ -389,10 +366,13 @@ export function createCodexEnvironment(
     }
     environment.CODEX_HOME = codexHome;
   }
+  if (credential !== undefined) {
+    environment[credential.environmentName] = credential.value;
+  }
   return Object.freeze(environment);
 }
 
-function createThreadOptions(workingDirectory: string): SafeCodexThreadOptions {
+function createThreadOptions(workingDirectory: string, model?: string): SafeCodexThreadOptions {
   return Object.freeze({
     threadSource: "codex-remote",
     workingDirectory,
@@ -402,14 +382,15 @@ function createThreadOptions(workingDirectory: string): SafeCodexThreadOptions {
     webSearchMode: "disabled",
     skipGitRepoCheck: false,
     additionalDirectories: Object.freeze([]),
+    ...(model === undefined ? {} : { model }),
   });
 }
 
-function toSdkThreadOptions(options: SafeCodexThreadOptions) {
-  return {
-    ...options,
-    additionalDirectories: [...options.additionalDirectories],
-  };
+function defaultCodexProvider(): ResolvedCodexProvider {
+  return Object.freeze({
+    providerId: "openai",
+    config: Object.freeze({ model_provider: "openai" }),
+  });
 }
 
 function validateTurnInput(projectId: string, workingDirectory: string, input: string): void {

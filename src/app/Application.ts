@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import { AgentManager } from "../agent/AgentManager.js";
 import { CodexAdapter } from "../agent/codex/CodexAdapter.js";
+import { ModelProviderResolver } from "../agent/codex/ModelProviderResolver.js";
 import { ConfigLoader } from "../config/ConfigLoader.js";
 import { ProjectManager } from "../projects/ProjectManager.js";
 import { SessionManager } from "../sessions/SessionManager.js";
@@ -98,6 +99,11 @@ export class Application {
     const config = configLoader.loadAppConfig();
     const projectsDocument = await configLoader.loadProjectsDocument(config);
     const projectManager = await ProjectManager.fromDocument(projectsDocument);
+    const modelProviderSecrets = configLoader.loadModelProviderSecrets(projectManager.modelProviders());
+    const modelProviderResolver = new ModelProviderResolver(
+      projectManager.modelProviders(),
+      modelProviderSecrets,
+    );
     const issueTrackerSecrets = configLoader.loadIssueTrackerSecrets(projectManager.list());
     const logger = new StructuredLogger({
       level: config.logLevel,
@@ -105,6 +111,7 @@ export class Application {
         config.telegramBotToken,
         ...(config.codexHome === undefined ? [] : [config.codexHome]),
         ...projectManager.list().flatMap((project) => project.codexHome === undefined ? [] : [project.codexHome]),
+        ...modelProviderSecrets.redactionValues(),
         ...issueTrackerSecrets.redactionValues(),
       ],
     });
@@ -122,6 +129,7 @@ export class Application {
       project.id,
       new CodexAdapter({
         environment,
+        provider: modelProviderResolver.resolve(project),
         ...(project.codexHome ?? config.codexHome) === undefined
           ? {}
           : { codexHome: project.codexHome ?? config.codexHome },

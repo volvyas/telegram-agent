@@ -1,8 +1,32 @@
 {
+  "modelProviders": {
+    "openai-default": {
+      "type": "codex-builtin",
+      "provider": "openai"
+    },
+    "ollama-local": {
+      "type": "codex-builtin",
+      "provider": "ollama"
+    },
+    "lmstudio-local": {
+      "type": "codex-builtin",
+      "provider": "lmstudio"
+    },
+    "home-llama": {
+      "type": "responses",
+      "name": "Home llama.cpp",
+      "baseUrl": "http://192.168.1.179:8080/v1",
+      "wireApi": "responses"
+    }
+  },
   "projects": {
     "motor": {
       "name": "Motor Backend",
       "path": "/home/user/projects/motor-backend",
+      "agent": {
+        "provider": "home-llama",
+        "model": "Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf"
+      },
       "codexHome": "/home/service-user/.local/share/codex-remote/motor-codex-home",
       "testCommand": {
         "executable": "./mvnw",

@@ -1127,7 +1127,7 @@ defaults і через generic Responses provider для remote/custom endpoint.
 }
 ```
 
-### [ ] DEV-065 — Перевірити Codex Responses compatibility та remote `llama.cpp`
+### [x] DEV-065 — Перевірити Codex Responses compatibility та remote `llama.cpp`
 
 **Результат:** `docs/local-model-integration.md` із зафіксованими versions,
 capability matrix і sanitized probe evidence.
@@ -1156,7 +1156,14 @@ proxy. Не маскувати несумісність переходом на 
 streaming, tools, continuation і auth для Ollama/LM Studio/`llama.cpp`; обраний
 integration flow не суперечить фактичним CLI/SDK options.
 
-### [ ] DEV-066 — Визначити generic model-provider configuration
+**Результат:** [`docs/local-model-integration.md`](docs/local-model-integration.md).
+Поточний operator-supplied `llama.cpp` endpoint проходить basic Responses SSE,
+після upgrade проходить function calls, streaming, terminal completion і
+stateless continuation через повну bounded input history. `previous_response_id`
+не підтримується, тому gateway має зберігати власну bounded history; прихований
+fallback на Chat Completions заборонений.
+
+### [x] DEV-066 — Визначити generic model-provider configuration
 
 **Залежить від:** DEV-065. **Types:** `ModelProviderConfig`,
 `CodexBuiltinProviderConfig`, `ResponsesProviderConfig`, `ProjectAgentConfig`,
@@ -1186,7 +1193,13 @@ unknown/duplicate reference, malformed URL, URL credentials, unsafe public
 HTTP, missing secret, unsupported wire API, bounded model/provider fields та
 backward-compatible config без `modelProviders`/`agent`.
 
-### [ ] DEV-067 — Параметризувати `CodexAdapter` і додати provider resolver
+**Результат:** typed provider/project-agent configuration, separate model
+provider secrets resolution with redaction, bounded runtime defaults,
+backward-compatible project loading, example configuration and architecture
+documentation are implemented. Generic provider secrets never enter typed
+project config, storage or errors.
+
+### [x] DEV-067 — Параметризувати `CodexAdapter` і додати provider resolver
 
 **Залежить від:** DEV-066. **Класи:** `ModelProviderResolver`,
 `CodexClientFactory`, доповнення `CodexAdapter` та `Application` composition.
@@ -1215,7 +1228,12 @@ OpenAI/Ollama/LM Studio/custom Responses, model propagation, credential
 allowlisting/redaction, per-project isolation та незмінність security options;
 існуючий OpenAI flow і всі його tests залишаються зеленими.
 
-### [ ] DEV-068 — Прив'язати persisted session до provider/model identity
+**Результат:** додано `ModelProviderResolver`, `CodexClientFactory`, explicit
+SDK config per project, model propagation, credential allowlisting/redaction і
+provider isolation. Security options залишилися locked down незалежно від
+provider; generated config не записується у shared `CODEX_HOME`.
+
+### [x] DEV-068 — Прив'язати persisted session до provider/model identity
 
 **Залежить від:** DEV-066–067. **Класи:** `AgentSession`, `SessionManager`,
 storage schema migration.
@@ -1236,7 +1254,14 @@ sessions без identity можуть resume-итися тільки як legacy
 незмінний local provider, зміну model/base URL/provider, два projects на одному
 endpoint, однаковий model на різних endpoints і заборону cross-provider resume.
 
-### [ ] DEV-069 — Додати provider diagnostics без startup dependency
+**Результат:** storage schema v2 додає non-secret `agentIdentity` та міграцію
+schema-v1 як legacy OpenAI. SessionManager перевіряє provider/model/endpoint і
+repository identity; зміна конфігурації переводить старий thread у historical
+non-resumable metadata, а наступний task створює новий thread із diagnostic
+warning. Restart recovery і waiting-session paths використовують ту саму
+перевірку.
+
+### [x] DEV-069 — Додати provider diagnostics без startup dependency
 
 **Залежить від:** DEV-067. **Класи/файли:** typed diagnostic service і
 operator-only probe command/script.
@@ -1258,7 +1283,15 @@ typed safe diagnostics. Raw provider body, URL credentials і secrets не
 успішно стартує з offline provider; probe чітко відрізняє network health від
 повної Codex compatibility та завершується по timeout/abort.
 
-### [ ] DEV-070 — Додати provider contract, integration і security tests
+**Результат:** додано typed `ProviderDiagnosticService` та operator-only
+`npm run probe:provider`. Probe не викликається під час startup, не отримує
+repository tools і не змінює workspace; `/models` є лише discovery signal,
+тоді як PASS вимагає Responses SSE, terminal event, harmless function call і
+full-history continuation. Fake transport tests покривають auth, timeout,
+network/TLS, unknown model, malformed/missing-terminal SSE, invalid tool call і
+protocol mismatch; results не містять raw body, endpoint credentials або secret.
+
+### [x] DEV-070 — Додати provider contract, integration і security tests
 
 **Залежить від:** DEV-067–069.
 
@@ -1278,6 +1311,15 @@ reasoning; endpoint не розширює чинні filesystem/command permissi
 SDK/CLI boundary хоча б для одного full flow, покривають cancellation/recovery
 та не потребують installed Ollama/LM Studio/`llama.cpp`.
 
+**Результат:** додано deterministic local fake Responses server у
+`tests/integration/CodexFakeResponses.integration.test.ts`. Він перевіряє
+реальний `@openai/codex-sdk` 0.154.0 і bundled CLI для new streamed turn,
+model/tools propagation, completion, resume та відсутності workspace mutation.
+Існуючі adapter/mapper/security suites покривають command/file events,
+cancellation, interrupted/malformed streams, provider mapping для OpenAI/
+Ollama/LM Studio/custom Responses та credential/reasoning/path redaction.
+Integration не потребує жодного встановленого local runtime.
+
 ### [ ] DEV-071 — Документація та live acceptance трьох local runtimes
 
 **Залежить від:** DEV-070.
@@ -1295,6 +1337,22 @@ completion, second-turn resume, `/stop`, gateway restart і project switching
 version та measured first-token/turn duration без prompt/file contents. Ollama
 і LM Studio можуть працювати локально або на test host, але не позначати runtime
 accepted лише через fake server або documentation claim.
+
+**Документаційна частина виконана 2026-10-03:** оновлено README,
+`.env.example`, `projects.example.json`, architecture, security та acceptance
+instructions для Ollama, LM Studio і generic `llama.cpp`, включно з Responses/
+SSE/tool compatibility, LAN/firewall/TLS, systemd behavior, troubleshooting та
+rollback на OpenAI. Live acceptance навмисно не запускався за scope цього
+продовження і залишається відкритим до окремого opt-in прогону.
+
+**Частковий live результат 2026-10-05:** operator-supplied remote `llama.cpp`
+пройшов provider diagnostic і real SDK/CLI flow у disposable repository:
+repository read, bounded commands, exact file creation, completion, continuation
+після reconstruct adapter/Codex client та cancellation. Direct SSE first output
+— 4.306 s, direct turn — 4.734 s, full tool turn — 125.050 s, resumed turn —
+22.598 s. Один recoverable item error перед кожним completed turn зафіксовано як
+DEV-081. Ollama, LM Studio, реальний Telegram `/stop`, process restart і
+cloud/local switching позначені `N/A`, тому задача залишається відкритою.
 
 **Готово, коли:** build/test/security suites зелені; live matrix явно має
 PASS/FAIL/N/A для кожного runtime і capability; щонайменше configured remote

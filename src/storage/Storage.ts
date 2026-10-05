@@ -1,7 +1,9 @@
 import type { AgentState } from "../agent/AgentState.js";
 import type { TaskGitSummary, TaskStatus, TaskTestSummary } from "../domain/TaskRecord.js";
+import type { AgentIdentity } from "../domain/AgentIdentity.js";
 
-export const STORAGE_SCHEMA_VERSION = 1 as const;
+export const STORAGE_SCHEMA_VERSION = 2 as const;
+export const LEGACY_STORAGE_SCHEMA_VERSION = 1 as const;
 
 /** ISO 8601 UTC timestamp produced by Date#toISOString. */
 export type PersistedTimestamp = string;
@@ -19,6 +21,10 @@ export interface PersistedSessionRecord {
   readonly startedAt?: PersistedTimestamp;
   readonly updatedAt: PersistedTimestamp;
   readonly pendingQuestion?: PersistedPendingQuestion;
+  readonly agentIdentity: AgentIdentity;
+  readonly resumable?: boolean;
+  readonly historicalThreadId?: string;
+  readonly resumeDiagnostic?: "AGENT_IDENTITY_CHANGED";
 }
 
 export interface PersistedPendingQuestion {

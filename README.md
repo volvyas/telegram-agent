@@ -125,6 +125,128 @@ Codex client для кожного project profile; кожен profile потр�
 Кожен path повинен існувати, бути canonical Git repository root і бути
 доступним service user. `projects.json`, `.env`, `data/` та logs ігноруються Git.
 
+## Local model providers
+
+Provider selection belongs to operator-owned `projects.json`; Telegram prompts
+cannot choose a provider, endpoint or credential. Choose one of the built-in
+local providers when using their standard server modes:
+
+```json
+{
+  "modelProviders": {
+    "ollama-local": { "type": "codex-builtin", "provider": "ollama" },
+    "lmstudio-local": { "type": "codex-builtin", "provider": "lmstudio" },
+    "home-llama": {
+      "type": "responses",
+      "name": "Home llama.cpp",
+      "baseUrl": "http://192.168.1.179:8080/v1",
+      "wireApi": "responses",
+      "apiKeyEnv": "HOME_LLAMA_API_KEY"
+    }
+  }
+}
+```
+
+Ollama normally listens on `127.0.0.1:11434`, and LM Studio's local server
+normally listens on `127.0.0.1:1234`; those defaults are deployment examples,
+not live acceptance results. A remote or custom `llama.cpp` server uses the
+generic `responses` provider and must expose `POST /v1/responses` with
+incremental SSE, `response.completed`, structured function calls and a
+full-history continuation. `/v1/models` alone is not compatibility proof, and
+the gateway never silently falls back to Chat Completions.
+
+The configured model ID must be the exact ID accepted by the runtime. Context
+capacity is a model/server limit: leave room for the system instructions,
+bounded conversation history, tool schemas and output tokens. If the runtime
+reports context overflow, reduce prompt/history size or select a model/server
+configuration with a larger context; changing only the gateway provider name
+does not increase it.
+
+For optional provider auth, set `apiKeyEnv` to an environment-variable name and
+put only its value in `.env` with mode `0600`. Credentials are not allowed in
+URLs, JSON, Telegram messages, logs or command arguments. Public endpoints must
+use HTTPS; plain HTTP is limited to loopback/private operator-owned networks.
+
+### LAN bind, firewall and TLS
+
+Keep Ollama, LM Studio and `llama.cpp` bound to loopback unless a separate
+gateway host must reach them. For LAN access, bind only to the private
+interface, allow the provider port from the gateway host's address in the host
+firewall, and do not port-forward it to the public Internet. Prefer HTTPS with
+a certificate trusted by the gateway host whenever traffic leaves the private
+operator-controlled network. Do not put credentials in a URL to work around a
+TLS or firewall error.
+
+The systemd unit waits for `network-online.target` because Telegram and remote
+providers may need networking, but provider health is not a startup dependency.
+An offline local/LAN model must not prevent gateway startup or `/status`, `/stop`
+and configuration diagnostics. Run the explicit bounded diagnostic when the
+provider is available:
+
+```bash
+PROBE_PROVIDER_ID=home-llama \
+PROBE_BASE_URL=http://192.168.1.179:8080/v1 \
+PROBE_MODEL='<exact model id>' \
+npm run probe:provider
+```
+
+The probe does not access a repository or mutate a workspace. It reports safe
+typed results for discovery, network/TLS/authentication, Responses SSE, tool
+call and continuation; it never prints raw provider bodies or secrets.
+
+For an explicitly approved live DEV-071 run, first create a disposable Git
+repository and a separate empty `CODEX_HOME`, then run:
+
+```bash
+DEV071_REPO='<absolute disposable repository path>' \
+DEV071_CODEX_HOME='<absolute isolated Codex home>' \
+DEV071_PROVIDER_ID=home-llama \
+DEV071_BASE_URL=http://192.168.1.179:8080/v1 \
+DEV071_MODEL='<exact model id>' \
+DEV071_CONFIRM_DISPOSABLE=1 \
+npm run accept:dev071
+```
+
+This runner mutates only the supplied repository fixture. It records bounded
+timing/event evidence, verifies command, patch, completion and resume behavior,
+reconstructs the adapter to simulate restart, and checks cancellation. It does
+not replace the Telegram `/stop`, real process restart, or provider-switching
+parts of the manual matrix.
+
+### Local provider troubleshooting
+
+- `NETWORK_UNREACHABLE` or timeout: verify the bind address, port, route and
+  firewall from the gateway host; do not infer model incompatibility from this.
+- `TLS_FAILED`: install/use the correct CA chain or use a private HTTP endpoint
+  only when it is genuinely loopback/private and operator-owned.
+- `AUTHENTICATION_FAILED`: verify the exact `apiKeyEnv` name and provider auth
+  mode; never paste the key into `projects.json` or a shell command.
+- `UNKNOWN_MODEL`: copy the exact model ID from the provider's model listing and
+  keep the configured context within the model's advertised capacity.
+- `MALFORMED_SSE`, `MISSING_TERMINAL_EVENT`, `INVALID_TOOL_CALL` or
+  `PROTOCOL_MISMATCH`: the runtime is not Codex-compatible in this mode; do not
+  switch to Chat Completions implicitly. Upgrade/configure the runtime or use a
+  separately reviewed compatibility provider.
+
+### Safe rollback to default OpenAI
+
+Stop new work, preserve a backup of `projects.json` and `data/`, then change the
+affected project's `agent` to the operator-owned built-in provider:
+
+```json
+"agent": {
+  "provider": "openai-default",
+  "model": "<approved OpenAI model>"
+}
+```
+
+Keep or remove the unused local provider definition according to the backup
+plan, remove only credentials no longer needed from `.env`, run `npm run build`,
+and restart the service. Provider/model identity validation intentionally will
+not resume a thread across providers; start a new task and retain the old state
+as historical metadata. Roll back by configuration, never by copying provider
+tokens into storage or deleting `data/state.json` blindly.
+
 ### GitHub Issues token
 
 Для project з `issueTracker.type: "github"` створіть окремий

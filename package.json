@@ -15,7 +15,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "test": "vitest run",
-    "test:security": "vitest run tests/security"
+    "test:security": "vitest run tests/security",
+    "probe:provider": "tsx scripts/probe-provider.ts",
+    "accept:dev071": "tsx scripts/dev071-live.mts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",

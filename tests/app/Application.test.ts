@@ -85,10 +85,19 @@ describe("Application", () => {
     expect(git.exitCode).toBe(0);
     const projectsConfigPath = join(root, "projects.json");
     await writeFile(projectsConfigPath, JSON.stringify({
+      modelProviders: {
+        offline: {
+          type: "responses",
+          name: "Offline provider",
+          baseUrl: "http://192.168.1.179:8080/v1",
+          wireApi: "responses",
+        },
+      },
       projects: {
         demo: {
           name: "Demo",
           path: repository,
+          agent: { provider: "offline", model: "offline-model" },
           allowedOperations: ["task"],
         },
       },

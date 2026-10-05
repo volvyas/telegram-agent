@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AgentEvent } from "../../src/agent/AgentEvent.js";
 import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
+import type { ModelProviderMap } from "../../src/config/ProjectConfig.js";
 import type { AgentSession } from "../../src/domain/AgentSession.js";
 import {
   SessionManager,
@@ -60,13 +61,18 @@ describe("SessionManager", () => {
     const secondManager = createManager(secondStorage);
     const restored = await secondManager.getSession("motor");
 
-    expect(restored).toEqual({
+    expect(restored).toMatchObject({
       projectId: "motor",
       projectPath: "/projects/motor",
       state: "COMPLETED",
       threadId: "THREAD-1",
       startedAt: timestamp,
       updatedAt: timestamp,
+    });
+    expect(restored?.agentIdentity).toMatchObject({
+      adapterKind: "codex",
+      providerId: "openai",
+      modelId: "",
     });
     expect(restored).not.toHaveProperty("activeRunId");
     expect(restored).not.toHaveProperty("lastEvent");
@@ -133,6 +139,39 @@ describe("SessionManager", () => {
     });
     await thirdStorage.close();
   });
+
+  it("restores a session only when provider, model and endpoint identity are unchanged", async () => {
+    const dataDirectory = await createDataDirectory();
+    const providerA: ModelProviderMap = new Map([[
+      "home",
+      { type: "responses", name: "Home", baseUrl: "https://one.example/v1", wireApi: "responses" },
+    ]]);
+    const firstStorage = new JsonStorage(dataDirectory);
+    await new SessionManager(firstStorage, registryWithProviders([projectWithAgent("motor", "/projects/motor", providerA)], providerA)).saveSession(
+      session("motor", "/projects/motor", "THREAD-1", "COMPLETED"),
+    );
+    await firstStorage.close();
+
+    const providerB: ModelProviderMap = new Map([[
+      "home",
+      { type: "responses", name: "Home", baseUrl: "https://two.example/v1", wireApi: "responses" },
+    ]]);
+    const secondStorage = new JsonStorage(dataDirectory);
+    const restored = await new SessionManager(
+      secondStorage,
+      registryWithProviders([projectWithAgent("motor", "/projects/motor", providerB)], providerB),
+    ).getSession("motor");
+
+    expect(restored).toMatchObject({
+      state: "FAILED",
+      resumable: false,
+      historicalThreadId: "THREAD-1",
+      resumeDiagnostic: "AGENT_IDENTITY_CHANGED",
+    });
+    expect(restored).not.toHaveProperty("threadId");
+    expect(restored?.agentIdentity?.providerId).toBe("home");
+    await secondStorage.close();
+  });
 });
 
 function createManager(storage: JsonStorage): SessionManager {
@@ -154,6 +193,21 @@ function registry(projects: readonly ProjectConfig[]): SessionProjectRegistry {
       if (configured === undefined) throw new Error("Project not found");
       return configured;
     },
+  };
+}
+
+function registryWithProviders(
+  projects: readonly ProjectConfig[],
+  providers: ModelProviderMap,
+): SessionProjectRegistry {
+  return { ...registry(projects), modelProviders: () => providers };
+}
+
+function projectWithAgent(id: string, path: string, providers: ModelProviderMap): ProjectConfig {
+  const provider = providers.keys().next().value as string;
+  return {
+    ...project(id, path),
+    agent: { provider, model: "model-1" },
   };
 }
 

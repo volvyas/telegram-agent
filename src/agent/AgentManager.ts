@@ -97,11 +97,12 @@ interface ActiveOperation {
 }
 
 type AgentSessionPatch = Partial<
-  Omit<AgentSession, "activeRunId" | "lastEvent" | "pendingQuestion">
+  Omit<AgentSession, "activeRunId" | "lastEvent" | "pendingQuestion" | "resumeDiagnostic">
 > & {
   readonly activeRunId?: string | undefined;
   readonly lastEvent?: AgentEvent | undefined;
   readonly pendingQuestion?: PendingAgentQuestion | undefined;
+  readonly resumeDiagnostic?: "AGENT_IDENTITY_CHANGED" | undefined;
 };
 
 export class AgentManager implements ProjectOperationCoordinator, ProjectOperationStopper {
@@ -186,6 +187,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
 
       operation.runId = run.runId;
       this.#updateSnapshot(session, { activeRunId: run.runId });
+      await this.#emitResumeDiagnostic(session, run.runId);
       if (operation.stopRequested) await agent.stop(run.runId);
       const terminalEvent = await this.#consumeEvents(
         session,
@@ -478,7 +480,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
 
     // A failed stream is not a safe continuation point. Start a fresh thread
     // so a transient/invalid Codex process cannot make every later task fail.
-    const threadId = existing.machine.state === "FAILED"
+    const threadId = existing.machine.state === "FAILED" || existing.snapshot.resumable === false
       ? undefined
       : existing.snapshot.threadId;
     const reason = existing.machine.state === "IDLE" ? "task_started" : "continued";
@@ -492,6 +494,20 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
       session: existing,
       ...(threadId === undefined ? {} : { threadId }),
     };
+  }
+
+  async #emitResumeDiagnostic(session: ManagedSession, runId: string): Promise<void> {
+    if (session.snapshot.resumeDiagnostic !== "AGENT_IDENTITY_CHANGED") return;
+    const event: AgentEvent = {
+      type: "warning",
+      projectId: session.snapshot.projectId,
+      runId,
+      occurredAt: this.#clock().toISOString(),
+      message: "Agent configuration changed; started a new thread instead of resuming the previous session.",
+    };
+    this.#updateSnapshot(session, { lastEvent: event, resumeDiagnostic: undefined });
+    await this.#persistSession(session);
+    await this.#onEvent?.(event);
   }
 
   async #getWaitingSession(project: ProjectConfig): Promise<ManagedSession> {

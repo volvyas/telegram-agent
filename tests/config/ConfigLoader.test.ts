@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigError } from "../../src/config/AppConfig.js";
 import { ConfigLoader } from "../../src/config/ConfigLoader.js";
-import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
+import type { ModelProviderMap, ProjectConfig } from "../../src/config/ProjectConfig.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -233,6 +233,49 @@ describe("ConfigLoader", () => {
     expect(secrets.redactionValues()).toEqual(["secret-one"]);
     expect(JSON.stringify(secrets)).toBe("{}");
     expect(JSON.stringify(projects)).not.toContain("secret-one");
+  });
+
+  it("loads model provider credentials separately and redacts them", () => {
+    const providers: ModelProviderMap = new Map([
+      ["local", {
+        type: "responses",
+        name: "Local",
+        baseUrl: "http://127.0.0.1:8080/v1",
+        wireApi: "responses",
+        apiKeyEnv: "LOCAL_MODEL_KEY",
+      }],
+    ]);
+    const loader = new ConfigLoader({ LOCAL_MODEL_KEY: " model-secret " });
+    const secrets = loader.loadModelProviderSecrets(providers);
+
+    expect(secrets.getApiKey("local")).toBe("model-secret");
+    expect(secrets.redactionValues()).toEqual(["model-secret"]);
+    expect(JSON.stringify(secrets)).toBe("{}");
+  });
+
+  it("rejects missing model provider credentials without exposing values", () => {
+    const providers: ModelProviderMap = new Map([
+      ["local", {
+        type: "responses",
+        name: "Local",
+        baseUrl: "http://127.0.0.1:8080/v1",
+        wireApi: "responses",
+        apiKeyEnv: "MISSING_MODEL_KEY",
+      }],
+    ]);
+    const loader = new ConfigLoader({ OTHER_SECRET: "do-not-leak" });
+
+    expect(() => loader.loadModelProviderSecrets(providers)).toThrowError(
+      expect.objectContaining({
+        code: "MODEL_PROVIDER_CREDENTIAL_REQUIRED",
+        variableName: "MISSING_MODEL_KEY",
+      }),
+    );
+    try {
+      loader.loadModelProviderSecrets(providers);
+    } catch (error) {
+      expect((error as Error).message).not.toContain("do-not-leak");
+    }
   });
 
   it("reports a missing tracker credential without exposing another value", () => {

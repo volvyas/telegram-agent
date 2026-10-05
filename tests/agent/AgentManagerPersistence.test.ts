@@ -15,7 +15,7 @@ import type {
   AgentStartOptions,
   CodingAgent,
 } from "../../src/agent/CodingAgent.js";
-import type { ProjectConfig } from "../../src/config/ProjectConfig.js";
+import type { ModelProviderMap, ProjectConfig } from "../../src/config/ProjectConfig.js";
 import { SessionManager } from "../../src/sessions/SessionManager.js";
 import { JsonStorage } from "../../src/storage/JsonStorage.js";
 import { CLEAN_GIT_STATUS_READER } from "../helpers/GitStatusReader.js";
@@ -65,6 +65,51 @@ describe("AgentManager persistent resume", () => {
     }]);
     await expect(new SessionManager(secondStorage, projects).getSession("motor"))
       .resolves.toMatchObject({ state: "COMPLETED", threadId: "THREAD-1" });
+    await secondStorage.close();
+  });
+
+  it("starts a fresh thread and emits a diagnostic after agent identity changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-remote-identity-change-test-"));
+    temporaryDirectories.push(root);
+    const dataDirectory = join(root, "data");
+    const providerA: ModelProviderMap = new Map([[
+      "home",
+      { type: "responses", name: "Home", baseUrl: "https://one.example/v1", wireApi: "responses" },
+    ]]);
+    const providerB: ModelProviderMap = new Map([[
+      "home",
+      { type: "responses", name: "Home", baseUrl: "https://two.example/v1", wireApi: "responses" },
+    ]]);
+
+    const firstStorage = new JsonStorage(dataDirectory);
+    await manager(
+      new RecordingAgent("THREAD-OLD"),
+      registryWithProvider(projectWithAgent("motor", "/projects/motor", providerA), providerA),
+      firstStorage,
+    ).startTask("motor", "Initial");
+    await firstStorage.close();
+
+    const warnings: AgentEvent[] = [];
+    const secondStorage = new JsonStorage(dataDirectory);
+    const secondAgent = new RecordingAgent("THREAD-NEW");
+    const secondProjects = registryWithProvider(
+      projectWithAgent("motor", "/projects/motor", providerB),
+      providerB,
+    );
+    const secondManager = new AgentManager(secondAgent, secondProjects, {
+      clock: () => new Date(occurredAt),
+      gitService: CLEAN_GIT_STATUS_READER,
+      sessionStore: new SessionManager(secondStorage, secondProjects),
+      onEvent: (event) => { warnings.push(event); },
+    });
+    await secondManager.startTask("motor", "Follow-up");
+
+    expect(secondAgent.starts).toHaveLength(1);
+    expect(secondAgent.resumes).toEqual([]);
+    expect(warnings[0]).toMatchObject({
+      type: "warning",
+      message: "Agent configuration changed; started a new thread instead of resuming the previous session.",
+    });
     await secondStorage.close();
   });
 });
@@ -137,6 +182,28 @@ function registry(configuredProject: ProjectConfig): AgentProjectRegistry {
       if (projectId !== configuredProject.id) throw new Error("Project not found");
       return configuredProject;
     },
+  };
+}
+
+function registryWithProvider(
+  configuredProject: ProjectConfig,
+  providers: ModelProviderMap,
+): AgentProjectRegistry & { modelProviders: () => ModelProviderMap } {
+  return {
+    ...registry(configuredProject),
+    modelProviders: () => providers,
+  };
+}
+
+function projectWithAgent(
+  id: string,
+  path: string,
+  providers: ModelProviderMap,
+): ProjectConfig {
+  const provider = providers.keys().next().value as string;
+  return {
+    ...project(id, path),
+    agent: { provider, model: "model-1" },
   };
 }
 

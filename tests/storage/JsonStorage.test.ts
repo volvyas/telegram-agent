@@ -61,7 +61,7 @@ describe("JsonStorage", () => {
   it("distinguishes an unsupported schema version from damaged data", async () => {
     const root = await createTemporaryDirectory();
     const dataDirectory = join(root, "data");
-    await writeState(dataDirectory, JSON.stringify({ schemaVersion: 2 }));
+    await writeState(dataDirectory, JSON.stringify({ schemaVersion: 3 }));
     const storage = new JsonStorage(dataDirectory);
     await expect(storage.load()).rejects.toMatchObject({
       code: "STORAGE_UNSUPPORTED_VERSION",
@@ -82,6 +82,38 @@ describe("JsonStorage", () => {
     await expect(new JsonStorage(dataDirectory).load()).rejects.toMatchObject({
       code: "STORAGE_DAMAGED",
     });
+  });
+
+  it("migrates a valid schema-v1 session as legacy OpenAI", async () => {
+    const root = await createTemporaryDirectory();
+    const dataDirectory = join(root, "data");
+    await writeState(dataDirectory, JSON.stringify({
+      schemaVersion: 1,
+      activeProjects: {},
+      sessions: {
+        demo: {
+          projectId: "demo",
+          projectPath: "/repo/demo",
+          state: "COMPLETED",
+          threadId: "THREAD-LEGACY",
+          updatedAt: "2026-09-15T10:00:00.000Z",
+        },
+      },
+      tasks: [],
+      sequence: { nextTaskNumber: 1 },
+      confirmations: [],
+    }));
+
+    const storage = new JsonStorage(dataDirectory);
+    const state = await storage.load();
+    expect(state.schemaVersion).toBe(2);
+    expect(state.sessions.demo?.agentIdentity).toMatchObject({
+      adapterKind: "codex",
+      providerId: "openai",
+      modelId: "",
+    });
+    expect(state.sessions.demo?.resumable).toBe(true);
+    await storage.close();
   });
 });
 

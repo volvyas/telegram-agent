@@ -8,6 +8,7 @@ import { ConfirmationService } from "../../src/confirmations/ConfirmationService
 import { SessionManager } from "../../src/sessions/SessionManager.js";
 import { JsonStorage } from "../../src/storage/JsonStorage.js";
 import { TaskManager } from "../../src/tasks/TaskManager.js";
+import { legacyOpenAiAgentIdentity } from "../../src/domain/AgentIdentity.js";
 
 const directories: string[] = [];
 
@@ -25,10 +26,12 @@ describe("restart recovery", () => {
         running: {
           projectId: "running", projectPath: "/repo/running", state: "RUNNING",
           startedAt: "2026-09-23T11:59:00.000Z", updatedAt: "2026-09-23T11:59:30.000Z",
+          agentIdentity: legacyOpenAiAgentIdentity(),
         },
         waiting: {
           projectId: "waiting", projectPath: "/repo/waiting", state: "WAITING_FOR_USER",
           updatedAt: "2026-09-23T11:59:30.000Z",
+          agentIdentity: legacyOpenAiAgentIdentity(),
         },
       },
       tasks: [{

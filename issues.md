@@ -6,6 +6,24 @@ history are preserved under their original IDs.
 
 ## Live acceptance defects
 
+### [ ] DEV-081 — Дослідити recoverable Codex item error з live `llama.cpp`
+
+**Виявлено під час DEV-071, 2026-10-05.** Кожен із повторених real SDK/CLI
+turns через configured generic Responses provider emitted один non-fatal
+`item.error` перед `run_started`. Обидва turns після цього виконали всі bounded
+commands з exit code 0, повернули очікувані markers і завершились terminal
+`completed`; raw provider body, error message і reasoning не записувалися.
+
+**Очікувана поведінка:** сумісний provider не створює user-visible false error
+під час успішного turn. Якщо подія є нешкідливим SDK/runtime advisory, adapter
+має класифікувати її як bounded diagnostic/warning; справжня recoverable model
+помилка повинна мати sanitized actionable code без raw body, path або content.
+
+**Готово, коли:** мінімальний live reproduction визначає source event без
+збереження sensitive output; deterministic regression фіксує правильний
+mapping; успішний Telegram turn не показує false failure, а реальна provider
+помилка лишається видимою й безпечною.
+
 ### [x] DEV-063 — Виправити GitHub.com endpoint allowlist для root API base
 
 **Виявлено під час DEV-056, 2026-09-30.** Configured GitHub.com base URL

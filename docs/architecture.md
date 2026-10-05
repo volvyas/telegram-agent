@@ -99,6 +99,81 @@ filesystem types.
 
 ## Project configuration
 
+Model providers are reusable, operator-owned top-level configuration. A project
+may select one provider and a bounded model ID through `agent`; neither provider
+IDs nor URLs are accepted from Telegram. The validated provider union is either
+an allowlisted Codex built-in (`openai`, `ollama`, `lmstudio`) or a generic
+Responses provider with normalized absolute `http`/`https` `baseUrl` and fixed
+`wireApi: "responses"`.
+
+```json
+{
+  "modelProviders": {
+    "home-llama": {
+      "type": "responses",
+      "name": "Home llama.cpp",
+      "baseUrl": "http://192.168.1.179:8080/v1",
+      "wireApi": "responses",
+      "apiKeyEnv": "HOME_LLAMA_API_KEY"
+    }
+  },
+  "projects": {
+    "motor": {
+      "name": "Motor Backend",
+      "path": "/home/user/projects/motor-backend",
+      "agent": {
+        "provider": "home-llama",
+        "model": "configured-server-model"
+      },
+      "allowedOperations": ["task", "status", "git", "diff", "test", "stop"]
+    }
+  }
+}
+```
+
+Provider IDs, names and model IDs are bounded. Custom URLs cannot contain
+userinfo, query parameters or fragments; plain HTTP is limited to loopback or
+private operator-owned network addresses. Credentials are referenced only by an
+environment-variable name. Their values are resolved by `ConfigLoader` into a
+separate redacted secrets container and never enter typed project config,
+storage, logs or errors. Generic retry and stream/idle timeout behavior uses
+bounded runtime defaults rather than arbitrary provider passthrough.
+
+Provider diagnostics are operator-only and decoupled from application startup.
+The diagnostic service performs a bounded Responses SSE/tool/continuation probe
+without repository tools or workspace mutation; `/models` is only a discovery
+signal. Safe typed failure codes are returned without raw provider bodies or
+credentials.
+
+## Local runtime deployment boundary
+
+Ollama and LM Studio use the allowlisted built-in provider IDs (`ollama` and
+`lmstudio`) for their standard local server modes. `llama.cpp` and other custom
+hosts use the generic `responses` provider only when they implement the full
+Responses contract: incremental SSE, `response.completed`, structured tool
+calls and a continuation with bounded full input history. Model discovery is a
+diagnostic hint, not a compatibility decision, and Chat Completions is never an
+implicit fallback.
+
+The runtime owns model context capacity. Gateway configuration must reserve
+space for instructions, bounded history, tool schemas and output; a provider
+context overflow is reported as a provider failure rather than silently
+truncating safety-relevant input. Provider IDs, model IDs, endpoint URLs and
+credential variable names are trusted configuration, never Telegram input.
+
+For LAN deployments, bind the model server to a private interface only, permit
+the port from the gateway host in the firewall, and do not expose the port via
+public forwarding. Public endpoints require HTTPS; private plain HTTP is
+allowed only for operator-owned loopback/private networks. The systemd unit's
+`network-online.target` ordering covers network-dependent operation but does
+not perform a provider health check during startup. The gateway remains usable
+for status, stop and configuration diagnostics while inference is offline.
+
+Rollback changes a project's provider/model to the built-in OpenAI provider and
+starts a new provider-bound thread. Old sessions remain historical metadata;
+cross-provider resume is rejected by identity validation. Secrets are removed
+from `.env` only after confirming no remaining project references them.
+
 Commands зберігаються як executable + args, а не shell string:
 
 ```json
@@ -246,7 +321,7 @@ JSON обрано замість SQLite, бо gateway single-process, обсяг
 потребує queries чи native dependency. Рішення переглядається при multi-process
 deployment або значному task history.
 
-### Storage schema v1
+### Storage schema v2
 
 `Storage` оперує цілим immutable snapshot і надає `load`, serialized atomic
 `update(mutator)` та `close`. Mutator отримує ізольований snapshot і повертає
@@ -256,7 +331,7 @@ deployment або значному task history.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "activeProjects": {
     "123456": {
       "projectId": "motor",
@@ -303,6 +378,14 @@ atomic rename і directory `fsync`. Malformed v1 state має категорію
 `projectPath` з уже canonical configured repository path перед поверненням
 thread ID. Невідповідність має safe error `SESSION_REPOSITORY_MISMATCH`: стара
 сесія не відновлюється і не переприв'язується до нового repository автоматично.
+
+Кожна session також зберігає non-secret `agentIdentity`: adapter kind, provider
+ID, model ID та SHA-256 fingerprint нормалізованої provider configuration без
+credential. Зміна provider, endpoint, model або repository робить старий thread
+non-resumable: його ID лишається лише як historical metadata, а наступний task
+створює новий thread і показує diagnostic warning. Schema-v1 sessions мігрують
+як legacy OpenAI sessions; вони не приписуються локальному provider без явної
+конфігурації.
 
 Кожен project ID має рівно один незалежний record із власними `threadId`,
 `state`, `startedAt` та `updatedAt`. Runtime-only `activeRunId` і `lastEvent` не

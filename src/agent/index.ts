@@ -18,6 +18,7 @@ export type {
 } from "./AgentEvent.js";
 export type { AgentRun } from "./AgentRun.js";
 export type { AgentSession } from "../domain/AgentSession.js";
+export type { AgentIdentity } from "../domain/AgentIdentity.js";
 export type { GitSnapshot, GitTaskComparison, GitTaskSnapshot } from "../domain/GitSnapshot.js";
 export type { TaskGitSummary, TaskRecord, TaskStatus, TaskTestSummary } from "../domain/TaskRecord.js";
 export {
@@ -58,6 +59,20 @@ export {
   CodexAdapterError,
   createCodexEnvironment,
 } from "./codex/CodexAdapter.js";
+export {
+  ModelProviderResolver,
+  ModelProviderResolverError,
+} from "./codex/ModelProviderResolver.js";
+export type {
+  CodexProviderConfigValue,
+  ProviderCredential,
+  ResolvedCodexProvider,
+} from "./codex/ModelProviderResolver.js";
+export { CodexClientFactory } from "./codex/CodexClientFactory.js";
+export type {
+  CodexClientFactoryOptions,
+  CodexClientFactoryPort,
+} from "./codex/CodexClientFactory.js";
 export type {
   CodexAdapterOptions,
   CodexClientPort,

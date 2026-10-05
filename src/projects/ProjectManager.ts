@@ -3,8 +3,11 @@ import { isAbsolute, resolve } from "node:path";
 
 import {
   ALLOWED_OPERATIONS,
+  CODEX_BUILTIN_PROVIDERS,
   ProjectConfigError,
   type AllowedOperation,
+  type ModelProviderConfig,
+  type ModelProviderMap,
   type ProjectCommand,
   type ProjectConfig,
 } from "../config/ProjectConfig.js";
@@ -31,12 +34,21 @@ const GITHUB_REPOSITORY_MAX_LENGTH = 100;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/;
 const GITHUB_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const API_VERSION_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MODEL_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const MAX_PROVIDER_NAME_LENGTH = 128;
+const MAX_PROVIDER_URL_LENGTH = 2_048;
+const MAX_MODEL_LENGTH = 256;
 
 export class ProjectManager {
   readonly #projects: ReadonlyMap<string, ProjectConfig>;
+  readonly #modelProviders: ModelProviderMap;
 
-  private constructor(projects: ReadonlyMap<string, ProjectConfig>) {
+  private constructor(
+    projects: ReadonlyMap<string, ProjectConfig>,
+    modelProviders: ModelProviderMap,
+  ) {
     this.#projects = projects;
+    this.#modelProviders = modelProviders;
   }
 
   public static async fromDocument(
@@ -44,12 +56,13 @@ export class ProjectManager {
     processRunner = new ProcessRunner(),
   ): Promise<ProjectManager> {
     const rawProjects = readProjectsRecord(document);
+    const modelProviders = parseModelProviders(document);
     const projects = new Map<string, ProjectConfig>();
     const paths = new Set<string>();
 
     for (const [id, rawProject] of Object.entries(rawProjects)) {
       validateProjectId(id);
-      const candidate = parseProjectCandidate(id, rawProject);
+      const candidate = parseProjectCandidate(id, rawProject, modelProviders);
       const canonicalPath = await inspectRepository(id, candidate.path, processRunner);
 
       if (paths.has(canonicalPath)) {
@@ -64,7 +77,7 @@ export class ProjectManager {
       projects.set(id, freezeProject({ ...candidate, path: canonicalPath }));
     }
 
-    return new ProjectManager(projects);
+    return new ProjectManager(projects, modelProviders);
   }
 
   public list(): readonly ProjectConfig[] {
@@ -85,6 +98,10 @@ export class ProjectManager {
       });
     }
     return project;
+  }
+
+  public modelProviders(): ModelProviderMap {
+    return new Map(this.#modelProviders);
   }
 }
 
@@ -116,7 +133,11 @@ function validateProjectId(id: string): void {
   }
 }
 
-function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
+function parseProjectCandidate(
+  id: string,
+  value: unknown,
+  modelProviders: ModelProviderMap,
+): ProjectCandidate {
   if (!isRecord(value)) {
     throw invalidProject(id, "Project configuration must be an object");
   }
@@ -127,6 +148,7 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
     throw invalidProject(id, "Project path must be absolute");
   }
   const codexHome = parseOptionalAbsolutePath(value.codexHome, id);
+  const agent = parseOptionalAgent(value.agent, id, modelProviders);
 
   const allowedOperations = parseAllowedOperations(value.allowedOperations, id);
   const testCommand = parseOptionalCommand(value.testCommand, id, "testCommand");
@@ -140,6 +162,7 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
     name,
     path,
     ...(codexHome === undefined ? {} : { codexHome }),
+    ...(agent === undefined ? {} : { agent }),
     allowedOperations,
     ...(testCommand === undefined ? {} : { testCommand }),
     ...(buildCommand === undefined ? {} : { buildCommand }),
@@ -147,6 +170,165 @@ function parseProjectCandidate(id: string, value: unknown): ProjectCandidate {
     ...(branch === undefined ? {} : { branch }),
     ...(issueTracker === undefined ? {} : { issueTracker }),
   };
+}
+
+function parseModelProviders(document: unknown): ModelProviderMap {
+  if (!isRecord(document)) return new Map();
+  if (document.modelProviders === undefined) return new Map();
+  if (!isRecord(document.modelProviders)) {
+    throw new ProjectConfigError(
+      "MODEL_PROVIDERS_INVALID",
+      "modelProviders must be an object",
+    );
+  }
+
+  const providers = new Map<string, ModelProviderConfig>();
+  for (const [id, value] of Object.entries(document.modelProviders)) {
+    if (!MODEL_PROVIDER_ID_PATTERN.test(id)) {
+      throw new ProjectConfigError(
+        "MODEL_PROVIDER_ID_INVALID",
+        "Model provider ID must be a lowercase bounded slug",
+      );
+    }
+    if (providers.has(id)) {
+      throw new ProjectConfigError(
+        "MODEL_PROVIDER_DUPLICATE",
+        "Model provider ID is duplicated",
+      );
+    }
+    providers.set(id, parseModelProvider(id, value));
+  }
+  return providers;
+}
+
+function parseModelProvider(id: string, value: unknown): ModelProviderConfig {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    throw invalidProvider(id, "Model provider must be a discriminated object");
+  }
+  if (value.type === "codex-builtin") {
+    assertProviderKeys(value, ["type", "provider"], id);
+    if (
+      typeof value.provider !== "string" ||
+      !(CODEX_BUILTIN_PROVIDERS as readonly string[]).includes(value.provider)
+    ) {
+      throw invalidProvider(id, "Built-in Codex provider is not supported");
+    }
+    return Object.freeze({
+      type: "codex-builtin",
+      provider: value.provider as (typeof CODEX_BUILTIN_PROVIDERS)[number],
+    });
+  }
+  if (value.type !== "responses") {
+    throw invalidProvider(id, "Model provider type is not supported");
+  }
+  assertProviderKeys(value, ["type", "name", "baseUrl", "wireApi", "apiKeyEnv"], id);
+  const name = readProviderString(value.name, id, "name", MAX_PROVIDER_NAME_LENGTH);
+  const baseUrl = parseResponsesBaseUrl(value.baseUrl, id);
+  if (value.wireApi !== "responses") {
+    throw invalidProvider(id, "Responses provider wireApi must be responses");
+  }
+  const apiKeyEnv = value.apiKeyEnv === undefined
+    ? undefined
+    : readProviderString(value.apiKeyEnv, id, "apiKeyEnv", 128);
+  if (apiKeyEnv !== undefined && !ENVIRONMENT_NAME_PATTERN.test(apiKeyEnv)) {
+    throw invalidProvider(id, "Responses provider apiKeyEnv must be an environment variable name");
+  }
+  return Object.freeze({
+    type: "responses",
+    name,
+    baseUrl,
+    wireApi: "responses",
+    ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
+  });
+}
+
+function parseOptionalAgent(
+  value: unknown,
+  projectId: string,
+  modelProviders: ModelProviderMap,
+): ProjectConfig["agent"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw invalidProject(projectId, "agent must be an object");
+  const keys = new Set(["provider", "model"]);
+  if (Object.keys(value).some((key) => !keys.has(key))) {
+    throw invalidProject(projectId, "agent contains an unknown setting");
+  }
+  const provider = readBoundedString(value.provider, projectId, "agent.provider", 64);
+  const model = readBoundedString(value.model, projectId, "agent.model", MAX_MODEL_LENGTH);
+  if (!modelProviders.has(provider)) {
+    throw new ProjectConfigError(
+      "MODEL_PROVIDER_REFERENCE_UNKNOWN",
+      "Project agent references an unknown model provider",
+      { projectId },
+    );
+  }
+  return Object.freeze({ provider, model });
+}
+
+function assertProviderKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  providerId: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+    throw invalidProvider(providerId, "Model provider contains an unknown setting");
+  }
+}
+
+function readProviderString(
+  value: unknown,
+  providerId: string,
+  field: string,
+  maxLength: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > maxLength ||
+    value.includes("\0")
+  ) {
+    throw invalidProvider(providerId, `${field} must be a non-empty bounded string`);
+  }
+  return value.trim();
+}
+
+function parseResponsesBaseUrl(value: unknown, providerId: string): string {
+  const configured = readProviderString(value, providerId, "baseUrl", MAX_PROVIDER_URL_LENGTH);
+  let url: URL;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw invalidProvider(providerId, "baseUrl must be an absolute HTTP(S) URL");
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username.length > 0 ||
+    url.password.length > 0 ||
+    url.search.length > 0 ||
+    url.hash.length > 0 ||
+    url.hostname.length === 0
+  ) {
+    throw invalidProvider(providerId, "baseUrl must not contain credentials, query or fragment");
+  }
+  if (url.protocol === "http:" && !isPrivateHttpHost(url.hostname)) {
+    throw invalidProvider(providerId, "Public HTTP baseUrl is not allowed");
+  }
+  url.pathname = url.pathname.replace(/\/+$/u, "");
+  return url.toString().replace(/\/$/u, "");
+}
+
+function isPrivateHttpHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  if (host === "localhost" || host === "::1") return true;
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+  const [first, second] = octets;
+  return first === 10 ||
+    first === 127 ||
+    (first === 172 && second !== undefined && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254);
 }
 
 function parseOptionalIssueTracker(
@@ -481,4 +663,8 @@ function invalidProject(projectId: string, message: string): ProjectConfigError 
 
 function invalidTracker(projectId: string, message: string): ProjectConfigError {
   return new ProjectConfigError("ISSUE_TRACKER_INVALID", message, { projectId });
+}
+
+function invalidProvider(providerId: string, message: string): ProjectConfigError {
+  return new ProjectConfigError("MODEL_PROVIDER_INVALID", message, { projectId: providerId });
 }

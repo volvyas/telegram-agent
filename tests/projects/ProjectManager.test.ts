@@ -50,6 +50,75 @@ describe("ProjectManager", () => {
     expect(manager.get("missing")).toBeUndefined();
   });
 
+  it("loads reusable built-in and generic Responses providers", async () => {
+    const repository = await createGitRepository("providers");
+    const manager = await ProjectManager.fromDocument({
+      modelProviders: {
+        openai: { type: "codex-builtin", provider: "openai" },
+        local: {
+          type: "responses",
+          name: " Home llama ",
+          baseUrl: "http://192.168.1.179:8080/v1/",
+          wireApi: "responses",
+          apiKeyEnv: "HOME_LLAMA_API_KEY",
+        },
+      },
+      projects: {
+        providers: {
+          ...projectDocument("Providers", repository, ["task"]),
+          agent: { provider: "local", model: "qwen-coder" },
+        },
+      },
+    });
+
+    expect([...manager.modelProviders()]).toEqual([
+      ["openai", { type: "codex-builtin", provider: "openai" }],
+      ["local", {
+        type: "responses",
+        name: "Home llama",
+        baseUrl: "http://192.168.1.179:8080/v1",
+        wireApi: "responses",
+        apiKeyEnv: "HOME_LLAMA_API_KEY",
+      }],
+    ]);
+    expect(manager.require("providers").agent).toEqual({
+      provider: "local",
+      model: "qwen-coder",
+    });
+  });
+
+  it.each([
+    [{ type: "codex-builtin", provider: "unsupported" }, "MODEL_PROVIDER_INVALID"],
+    [{ type: "responses", name: "x", baseUrl: "not-a-url", wireApi: "responses" }, "MODEL_PROVIDER_INVALID"],
+    [{ type: "responses", name: "x", baseUrl: "http://public.example/v1", wireApi: "responses" }, "MODEL_PROVIDER_INVALID"],
+    [{ type: "responses", name: "x", baseUrl: "https://user:pass@example.test/v1", wireApi: "responses" }, "MODEL_PROVIDER_INVALID"],
+    [{ type: "responses", name: "x", baseUrl: "https://example.test/v1?token=secret", wireApi: "responses" }, "MODEL_PROVIDER_INVALID"],
+    [{ type: "responses", name: "x", baseUrl: "https://example.test/v1", wireApi: "chat" }, "MODEL_PROVIDER_INVALID"],
+    [{ type: "responses", name: "x", baseUrl: "https://example.test/v1", wireApi: "responses", headers: {} }, "MODEL_PROVIDER_INVALID"],
+  ])("rejects unsafe or unsupported provider definitions", async (provider, code) => {
+    const repository = await createGitRepository("invalid-provider");
+    await expect(ProjectManager.fromDocument({
+      modelProviders: { local: provider },
+      projects: { demo: projectDocument("Demo", repository, ["task"]) },
+    })).rejects.toMatchObject({ code });
+  });
+
+  it("rejects an unknown project provider reference", async () => {
+    const repository = await createGitRepository("unknown-provider");
+    await expect(ProjectManager.fromDocument({
+      modelProviders: {},
+      projects: {
+        demo: {
+          ...projectDocument("Demo", repository, ["task"]),
+          agent: { provider: "missing", model: "model" },
+        },
+      },
+    })).rejects.toMatchObject({
+      code: "MODEL_PROVIDER_REFERENCE_UNKNOWN",
+      projectId: "demo",
+    });
+  });
+
   it("rejects duplicate canonical repository paths", async () => {
     const repository = await createGitRepository("duplicate");
 
