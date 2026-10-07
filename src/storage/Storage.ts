@@ -4,11 +4,14 @@ import type { AgentIdentity } from "../domain/AgentIdentity.js";
 
 export const STORAGE_SCHEMA_VERSION = 2 as const;
 export const LEGACY_STORAGE_SCHEMA_VERSION = 1 as const;
+export const PREVIOUS_STORAGE_SCHEMA_VERSION = 1 as const;
+import type { ActorId } from "../domain/Actor.js";
 
 /** ISO 8601 UTC timestamp produced by Date#toISOString. */
 export type PersistedTimestamp = string;
 
 export interface ActiveProjectRecord {
+  readonly actorId?: ActorId;
   readonly projectId: string;
   readonly updatedAt: PersistedTimestamp;
 }
@@ -31,6 +34,8 @@ export interface PersistedPendingQuestion {
   readonly questionId: string;
   readonly question: string;
   readonly choices: readonly string[];
+  readonly actorId?: ActorId;
+  /** @deprecated read-only migration compatibility for old callers. */
   readonly userId?: number;
   readonly createdAt: PersistedTimestamp;
 }
@@ -38,7 +43,9 @@ export interface PersistedPendingQuestion {
 /** A short-lived, single-use authorization for a potentially dangerous operation. */
 export interface Confirmation {
   readonly id: string;
-  readonly userId: number;
+  readonly actorId?: ActorId;
+  /** @deprecated compatibility alias; new application code uses actorId. */
+  readonly userId?: number;
   readonly projectId: string;
   readonly operation: string;
   readonly createdAt: PersistedTimestamp;

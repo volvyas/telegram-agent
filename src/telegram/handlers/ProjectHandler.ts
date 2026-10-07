@@ -5,6 +5,7 @@ import type { ProjectManager } from "../../projects/ProjectManager.js";
 import type { Storage } from "../../storage/Storage.js";
 import { ProjectKeyboard } from "../keyboards/ProjectKeyboard.js";
 import type { DashboardKeyboard } from "../keyboards/DashboardKeyboard.js";
+import { telegramActorId } from "../../domain/Actor.js";
 
 const UNKNOWN_PROJECT_MESSAGE = "Unknown project.";
 
@@ -76,7 +77,8 @@ export class ProjectHandler {
   public async restoreActiveProject(userId: number): Promise<ProjectConfig | undefined> {
     const active = this.getActiveProject(userId);
     if (active !== undefined || this.#storage === undefined) return active;
-    const record = (await this.#storage.load()).activeProjects[String(userId)];
+    const state = await this.#storage.load();
+    const record = state.activeProjects[telegramActorId(userId)] ?? state.activeProjects[String(userId)];
     const project = record === undefined ? undefined : this.#projectManager.get(record.projectId);
     if (project !== undefined) this.#activeProjects.set(userId, project.id);
     return project;
@@ -97,7 +99,8 @@ export class ProjectHandler {
         ...state,
         activeProjects: {
           ...state.activeProjects,
-          [String(userId)]: { projectId: project.id, updatedAt },
+          [telegramActorId(userId)]: { actorId: telegramActorId(userId), projectId: project.id, updatedAt },
+          [String(userId)]: { actorId: telegramActorId(userId), projectId: project.id, updatedAt },
         },
       }));
     }
@@ -159,5 +162,6 @@ function codexIdentifier(codexHome: string): string {
     })
     .join("")
     .trim();
-  return component.length === 0 ? "configured" : component.slice(0, 128);
+  const display = component.replace(/^\.(?:codex|claude)-/u, "");
+  return display.length === 0 ? "configured" : display.slice(0, 128);
 }

@@ -194,6 +194,22 @@ The probe does not access a repository or mutate a workspace. It reports safe
 typed results for discovery, network/TLS/authentication, Responses SSE, tool
 call and continuation; it never prints raw provider bodies or secrets.
 
+To trace actual Codex requests to a generic local Responses provider, use the
+opt-in `npm run log:provider` loopback proxy. Metadata is logged by default;
+raw request/response bodies require `PROVIDER_LOG_BODIES=1` and can contain
+sensitive code, prompts and reasoning. See [HTTP diagnostics setup and limits](docs/local-model-integration.md#opt-in-http-diagnostics)
+before temporarily routing a provider through the proxy.
+
+For models with a known server context limit, set the optional per-project
+`agent.context` budget (see `projects.example.json`): `windowTokens`,
+`outputReserveTokens`, and `safetyMarginTokens`, all positive integers with
+reserves totaling less than the window. For 32768 / 4096 / 2048, native Codex
+auto-compaction is requested at 26624 tokens. The threshold is capped at 90%
+of the window. This is early-compaction budgeting, **not** a hard output-token
+cap or a guarantee that an oversized single request fits. It does not enlarge
+the server's context. Omitted configuration retains existing Codex defaults.
+See [DEV-085 behavior, limitations and live checklist](docs/local-model-integration.md#dev-085-context-budget-and-native-compaction).
+
 For an explicitly approved live DEV-071 run, first create a disposable Git
 repository and a separate empty `CODEX_HOME`, then run:
 

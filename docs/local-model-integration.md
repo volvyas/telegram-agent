@@ -91,3 +91,155 @@ No compatibility proxy is required for the upgraded endpoint. DEV-065-PROXY
 remains unnecessary unless a future operator endpoint lacks the same structured
 tool and full-history continuation behavior. Any proxy must remain an explicit
 provider and never become an implicit Chat Completions fallback.
+
+## Opt-in HTTP diagnostics
+
+See also the [context-budget investigation](#dev-085-context-budget-and-native-compaction)
+for the context exhaustion identified by the captured tool-call traces.
+
+Gateway logs cannot capture provider HTTP traffic sent by the Codex subprocess.
+Use the separate loopback-only tracing proxy for a bounded diagnostic session:
+
+```bash
+PROVIDER_LOG_UPSTREAM=http://192.168.1.179:8080/v1 \
+  npm run log:provider
+```
+
+Temporarily change only the target generic Responses provider's `baseUrl` in
+`projects.json` to `http://127.0.0.1:8081/v1`, then restart the gateway to load
+the configuration. Keep the model, provider ID and `apiKeyEnv` unchanged.
+This does not intercept built-in providers or other providers. The proxy must
+run in the same network namespace as Codex (container loopback is separate).
+
+By default it writes **metadata only**: unique request ID, timestamp, duration,
+route, HTTP status, transfer outcome, byte counts and SHA-256 digests. It never
+records headers (including Authorization/Cookie), URL queries or raw transport
+error messages. Credentials are forwarded to the fixed upstream, not logged.
+Redirects are passed through, not followed by the proxy. Only `GET /v1/models`,
+`POST /v1/responses` and `POST /v1/responses/compact` are accepted.
+
+For the invalid tool-arguments JSON investigation, explicitly enable bodies:
+
+```bash
+PROVIDER_LOG_UPSTREAM=http://192.168.1.179:8080/v1 \
+  PROVIDER_LOG_BODIES=1 npm run log:provider
+```
+
+**Sensitive diagnostic mode:** bodies can contain repository code, prompts,
+tool output, reasoning and secrets embedded in content. There is deliberately
+no body redaction/re-serialization: it would destroy the escaping evidence.
+Do not upload raw traces or enable this for normal production operation.
+Header credentials are excluded, but secrets inside bodies are not filtered.
+Any local process can access the loopback listener; use only on a trusted host.
+
+Each run creates `logs/provider/provider-trace-*` (directory mode `0700`),
+containing per-request `<id>.json` and optional `<id>.request.body` /
+`<id>.response.body` files (mode `0600`). Response files preserve HTTP body
+bytes, including SSE; HTTP chunk framing is not recorded. Streams are forwarded
+incrementally with backpressure, without parsing JSON or rewriting escaping.
+Capture files are written after transfer completion or failure, not continuously;
+a forced process kill can lose an in-flight trace.
+
+Limits are configurable via environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PROVIDER_LOG_PORT` | `8081` | Listener bound exclusively to `127.0.0.1` |
+| `PROVIDER_LOG_DIR` | `logs/provider` | Parent directory for unique trace sessions |
+| `PROVIDER_LOG_MAX_BODY_BYTES` | `2097152` | Capture cap per request/response body; forwarding is not capped |
+| `PROVIDER_LOG_MAX_REQUESTS` | `100` | Accepted requests per session; further requests get HTTP 503 |
+
+Each transfer has a five-minute deadline. Default body capture consumes at most
+400 MiB per session plus metadata; concurrent captures also consume memory.
+There is no automatic retention across sessions: remove sensitive traces when
+the investigation is finished. `logs/` is gitignored, but is not a secret vault.
+Check `captureBodies`, `truncated` and `outcome` before interpreting an apparent
+cut-off as a provider problem; metadata-only captures store zero body bytes.
+A logging-write failure emits a generic console warning without changing the
+provider response. HTTP 500 with a fully transferred body has outcome `complete`;
+this describes transfer completion, not model success.
+
+Reproduce one task, then correlate the HTTP 500 response with its request using
+the filename ID. Inspect whether the malformed arguments were already present
+in request history or first appeared in the response. A server exception alone
+may still require server-side pre-parser output and generation stop-reason logs.
+Restore the original provider `baseUrl` and restart the gateway **before**
+stopping the proxy. The command does not edit `projects.json` automatically.
+
+## DEV-085 context budget and native compaction
+
+Offline implementation started **2026-10-07**; real llama.cpp acceptance is
+pending. OpenAI Docs was used to select the documented
+[`model_context_window` and `model_auto_compact_token_limit` settings](https://developers.openai.com/codex/config-reference/),
+then the installed SDK/CLI behavior was verified against a loopback fake server.
+No model server or cloud inference was contacted for these tests.
+
+Set this inside the target project's `agent` alongside `provider` and `model`:
+
+```json
+"context": {
+  "windowTokens": 32768,
+  "outputReserveTokens": 4096,
+  "safetyMarginTokens": 2048
+}
+```
+
+All three values are required positive safe integers; reserves must leave a
+positive input budget. Unknown settings are rejected. The resolver passes
+`model_context_window = windowTokens` and
+`model_auto_compact_token_limit = min(windowTokens - outputReserveTokens - safetyMarginTokens, floor(windowTokens * 0.9))`
+at the top level of the per-client Codex config (26624 for this example).
+The budget is scoped to the project/provider/model, not a global 32k default.
+Changing it requires a gateway restart. Existing sessions can resume with the
+new settings; provider/model identity isolation is unchanged. Production
+`projects.json` has not been modified by this implementation.
+
+Observed with the installed CLI through the real SDK, not just a mocked SDK:
+
+- At below-threshold reported usage, continuation sends the existing history.
+- Above-threshold usage triggers a tool-free summarization request to the same
+  custom provider's `/v1/responses`, then ordinary generation with that summary.
+  `/v1/responses/compact` is not required for this tested custom-provider path.
+- This works after recreating the adapter/resuming the thread and mid-turn
+  after a tool result. Compaction receives matching tool-call/result pairs;
+  the returned summary is present in subsequent requests and persists on resume.
+- Nearly all input tokens were marked cached in the resume fixture: caching
+  does not prevent the context threshold from triggering.
+- Failed summarization has bounded native retries and fails the turn without
+  proceeding to ordinary generation. Stop during pending compaction produces
+  STOPPED, not completed. DEV-084's separate retry-event classification defect
+  is unchanged; transient retries may still produce premature gateway failure.
+
+Limits and remaining work:
+
+- Reserves lower the compaction trigger; they do **not** set `max_output_tokens`.
+  Native estimates/model metadata and provider `usage` drive compaction. There
+  is no gateway tokenizer counting raw HTTP payloads, no subtraction of cached
+  tokens, and no byte-to-token conversion presented as exact.
+- The request includes instructions, schemas, history and runtime additions.
+  A huge fresh prompt, a single large tool result or a very long generation can
+  still outrun the reserve. Hard preflight protection for those cases and an
+  actionable context-specific failure diagnostic remain open under DEV-085;
+  the current change must not be advertised as a hard context safety boundary.
+- The mock supplies a known summary; tests prove transport, threshold triggering
+  and persistence, not that the real model preserves every user constraint.
+- After an actual FAILED session, the existing manager starts the next task in
+  a fresh thread. Submit a smaller task with an explicit summary of constraints
+  and completed work; inspect changes before retrying side-effecting work. No
+  automatic provider switch, history-file edits or command replay is added.
+
+Live acceptance when the server is available:
+
+1. Confirm the effective per-slot context in llama.cpp and the exact model ID;
+   do not infer context capacity from GGUF name or an advertised maximum.
+2. Use a disposable repository and isolated Codex home. Configure the budget
+   for that effective context, leaving reserve for reasoning/output and the
+   compaction request itself. Do not resume the already-corrupted trace thread.
+3. Grow harmless conversation/tool output across the threshold. Record only
+   sanitized request counts, token usage and terminal event types. Confirm a
+   tool-free compaction request and reduced subsequent history without a 500.
+4. Check retained constraints, matching tool results, follow-up and restart
+   resume; test cancellation and controlled compaction failure. Separately
+   cover a large single input/result and leave any unsupported case explicit.
+5. Keep DEV-085 open until remaining safeguards and live criteria pass. The
+   incomplete-tool-call problem in DEV-086 is not solved by early compaction.

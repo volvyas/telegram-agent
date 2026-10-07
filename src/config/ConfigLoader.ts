@@ -7,6 +7,7 @@ import {
   LOG_LEVELS,
   type AppConfig,
   type LogLevel,
+  type WebConfig,
 } from "./AppConfig.js";
 import { IssueTrackerSecrets } from "./IssueTrackerConfig.js";
 import type {
@@ -71,15 +72,12 @@ export class ConfigLoader {
   }
 
   public loadAppConfig(): AppConfig {
-    const telegramBotToken = requireNonEmpty(
-      this.#environment.TELEGRAM_BOT_TOKEN,
-      "TELEGRAM_BOT_TOKEN",
-    );
-    validateTelegramToken(telegramBotToken);
-
-    const telegramAllowedUserIds = parseAllowedUserIds(
-      this.#environment.TELEGRAM_ALLOWED_USER_IDS,
-    );
+    const telegramEnabled = parseTransportFlag(this.#environment.TELEGRAM_ENABLED, "TELEGRAM_ENABLED", this.#environment.TELEGRAM_BOT_TOKEN !== undefined || this.#environment.TELEGRAM_ALLOWED_USER_IDS !== undefined);
+    const webEnabled = parseTransportFlag(this.#environment.WEB_ENABLED, "WEB_ENABLED", false);
+    if (!telegramEnabled && !webEnabled) throw new ConfigError("NO_TRANSPORT_ENABLED", "At least one transport must be enabled");
+    const telegramBotToken = telegramEnabled ? requireNonEmpty(this.#environment.TELEGRAM_BOT_TOKEN, "TELEGRAM_BOT_TOKEN") : undefined;
+    if (telegramBotToken !== undefined) validateTelegramToken(telegramBotToken);
+    const telegramAllowedUserIds = telegramEnabled ? parseAllowedUserIds(this.#environment.TELEGRAM_ALLOWED_USER_IDS) : undefined;
     const configuredProjectsPath = this.#environment.PROJECTS_CONFIG?.trim();
     const projectsConfigPath = resolve(
       this.#cwd,
@@ -93,11 +91,15 @@ export class ConfigLoader {
       "CODEX_HOME",
     );
 
+    const web = webEnabled ? parseWebConfig(this.#environment) : undefined;
     const baseConfig = {
-      telegramBotToken,
-      telegramAllowedUserIds,
+      telegramEnabled,
+      telegramBotToken: telegramBotToken ?? "",
+      telegramAllowedUserIds: telegramAllowedUserIds ?? new Set<number>(),
+      webEnabled,
       projectsConfigPath,
       logLevel,
+      ...(web === undefined ? {} : { web }),
     };
 
     return Object.freeze(
@@ -175,6 +177,47 @@ export class ConfigLoader {
     return new IssueTrackerSecrets(tokens, writeTokens);
   }
 }
+
+function parseTransportFlag(value: string | undefined, variableName: string, legacyDefault: boolean): boolean {
+  if (value === undefined || value.trim() === "") return legacyDefault;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  throw new ConfigError("BOOLEAN_INVALID", `${variableName} must be true or false`, { variableName });
+}
+
+function parseWebConfig(environment: NodeJS.ProcessEnv): WebConfig {
+  const env = requireOneOf(environment.WEB_ENVIRONMENT, "WEB_ENVIRONMENT", ["development", "production"] as const);
+  const host = requireNonEmpty(environment.WEB_HOST, "WEB_HOST");
+  const port = parsePort(environment.WEB_PORT, "WEB_PORT");
+  const publicUrl = requireNonEmpty(environment.WEB_PUBLIC_URL, "WEB_PUBLIC_URL");
+  let url: URL;
+  try { url = new URL(publicUrl); } catch { throw new ConfigError("WEB_PUBLIC_URL_INVALID", "WEB_PUBLIC_URL must be an absolute URL", { variableName: "WEB_PUBLIC_URL" }); }
+  const tlsMode = requireOneOf(environment.WEB_TLS_MODE, "WEB_TLS_MODE", ["direct", "reverse-proxy"] as const);
+  if (env === "production" && url.protocol !== "https:") throw new ConfigError("WEB_PUBLIC_URL_HTTPS_REQUIRED", "Production WEB_PUBLIC_URL must use HTTPS", { variableName: "WEB_PUBLIC_URL" });
+  if (env === "production" && tlsMode === "reverse-proxy" && !isLoopback(host) && !host.startsWith("unix:")) throw new ConfigError("WEB_PROXY_BIND_INVALID", "Reverse-proxy mode must bind loopback or Unix socket", { variableName: "WEB_HOST" });
+  const cert = parseOptionalAbsolutePath(environment.WEB_TLS_CERT_PATH, "WEB_TLS_CERT_PATH");
+  const key = parseOptionalAbsolutePath(environment.WEB_TLS_KEY_PATH, "WEB_TLS_KEY_PATH");
+  if (tlsMode === "direct" && env === "production" && (cert === undefined || key === undefined)) throw new ConfigError("WEB_TLS_CERT_REQUIRED", "Direct Web TLS requires certificate and key paths", { variableName: "WEB_TLS_CERT_PATH" });
+  if (tlsMode === "direct" && env === "development" && url.protocol !== "http:" && (cert === undefined || key === undefined)) throw new ConfigError("WEB_TLS_CERT_REQUIRED", "HTTPS development mode requires certificate and key paths", { variableName: "WEB_TLS_CERT_PATH" });
+  if (tlsMode === "reverse-proxy" && (cert !== undefined || key !== undefined)) throw new ConfigError("WEB_TLS_PATH_FORBIDDEN", "Reverse-proxy mode must not configure application TLS files", { variableName: "WEB_TLS_MODE" });
+  const passwordHash = requireNonEmpty(environment.WEB_PASSWORD_HASH, "WEB_PASSWORD_HASH");
+  return Object.freeze({ enabled: true, environment: env, host, port, publicUrl: url.toString(), tlsMode, ...(cert === undefined ? {} : { tlsCertPath: cert }), ...(key === undefined ? {} : { tlsKeyPath: key }), passwordHash });
+}
+
+function requireOneOf<T extends string>(value: string | undefined, variableName: string, choices: readonly T[]): T {
+  const normalized = requireNonEmpty(value, variableName) as T;
+  if (!choices.includes(normalized)) throw new ConfigError("ENUM_INVALID", `${variableName} has an invalid value`, { variableName });
+  return normalized;
+}
+
+function parsePort(value: string | undefined, variableName: string): number {
+  const parsed = Number(requireNonEmpty(value, variableName));
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 65_535) throw new ConfigError("PORT_INVALID", `${variableName} must be a valid TCP port`, { variableName });
+  return parsed;
+}
+
+function isLoopback(host: string): boolean { return host === "127.0.0.1" || host === "::1" || host === "localhost"; }
 
 function requireNonEmpty(value: string | undefined, variableName: string): string {
   const normalized = value?.trim();

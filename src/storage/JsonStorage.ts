@@ -13,6 +13,7 @@ import {
   type StorageUpdate,
 } from "./Storage.js";
 import { legacyOpenAiAgentIdentity } from "../domain/AgentIdentity.js";
+import { parseActorId, telegramActorId } from "../domain/Actor.js";
 
 const AGENT_STATES = new Set([
   "IDLE",
@@ -64,7 +65,7 @@ export class JsonStorage implements Storage {
   public update(mutator: StorageUpdate): Promise<void> {
     return this.#enqueue(async () => {
       const current = await this.#ensureLoaded();
-      const candidate = normalizeLegacySessionIdentities(mutator(cloneAndFreeze(current)));
+      const candidate = normalizeLegacyActors(normalizeLegacySessionIdentities(mutator(cloneAndFreeze(current))));
       assertPersistedState(candidate);
       await this.#writeAtomically(candidate);
       this.#state = cloneAndFreeze(candidate);
@@ -120,8 +121,7 @@ export class JsonStorage implements Storage {
         cause: error,
       });
     }
-    const shouldMigrateLegacy = isRecord(document) &&
-      document.schemaVersion === LEGACY_STORAGE_SCHEMA_VERSION;
+    const shouldMigrateLegacy = isRecord(document) && document.schemaVersion === LEGACY_STORAGE_SCHEMA_VERSION;
     if (isRecord(document) && typeof document.schemaVersion === "number" &&
         document.schemaVersion !== STORAGE_SCHEMA_VERSION &&
         document.schemaVersion !== LEGACY_STORAGE_SCHEMA_VERSION) {
@@ -139,7 +139,7 @@ export class JsonStorage implements Storage {
       if (isRecord(document) && document.confirmations === undefined) {
         document = { ...document, confirmations: [] };
       }
-      document = normalizeLegacySessionIdentities(document);
+      document = normalizeLegacyActors(normalizeLegacySessionIdentities(document));
       assertPersistedState(document);
     } catch (error) {
       throw new JsonStorageError("STORAGE_DAMAGED", "Storage state has an invalid shape", {
@@ -219,7 +219,8 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
   assert(value.schemaVersion === STORAGE_SCHEMA_VERSION, "invalid schema version");
   assert(isRecord(value.activeProjects), "activeProjects must be an object");
   for (const [userId, activeProject] of Object.entries(value.activeProjects)) {
-    assert(/^\d+$/.test(userId) && isRecord(activeProject), "invalid active project");
+    assert((parseActorId(userId) !== undefined || /^\d+$/u.test(userId)) && isRecord(activeProject), "invalid active project actor");
+    assert(activeProject.actorId === undefined || activeProject.actorId === (parseActorId(userId) ?? telegramActorId(Number(userId))), "active project actor mismatch");
     assertNonEmptyString(activeProject.projectId);
     assertTimestamp(activeProject.updatedAt);
   }
@@ -243,9 +244,7 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
       assertNonEmptyString(question.question);
       assert(Array.isArray(question.choices), "invalid question choices");
       for (const choice of question.choices) assertNonEmptyString(choice);
-      if (question.userId !== undefined) {
-        assert(typeof question.userId === "number" && Number.isSafeInteger(question.userId) && question.userId >= 0, "invalid question user");
-      }
+      if (question.actorId !== undefined) assert(parseActorId(question.actorId) !== undefined, "invalid question actor");
       assertTimestamp(question.createdAt);
     }
   }
@@ -275,7 +274,7 @@ function assertPersistedState(value: unknown): asserts value is PersistedState {
   for (const confirmation of value.confirmations) {
     assert(isRecord(confirmation), "invalid confirmation");
     assertNonEmptyString(confirmation.id);
-    assert(typeof confirmation.userId === "number" && Number.isSafeInteger(confirmation.userId) && confirmation.userId >= 0, "invalid confirmation user");
+    assert(parseActorId(confirmation.actorId) !== undefined, "invalid confirmation actor");
     assertNonEmptyString(confirmation.projectId);
     assertNonEmptyString(confirmation.operation);
     assertTimestamp(confirmation.createdAt);
@@ -314,6 +313,32 @@ function normalizeLegacySessionIdentities(value: unknown): unknown {
     return [projectId, { ...session, agentIdentity: legacyIdentity, resumable: true }];
   }));
   return { ...value, sessions };
+}
+
+function normalizeLegacyActors(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const activeProjects = isRecord(value.activeProjects)
+    ? Object.fromEntries(Object.entries(value.activeProjects).flatMap(([key, record]): Array<[string, unknown]> => {
+        const actorId = parseActorId(key) ?? (/^\d+$/u.test(key) ? telegramActorId(Number(key)) : undefined);
+        return actorId === undefined || !isRecord(record)
+          ? [[key, record] as [string, unknown]]
+          : [[actorId, { ...record, actorId }] as [string, unknown], ...(key === actorId ? [] : [[key, { ...record, actorId }] as [string, unknown]])];
+      }))
+    : value.activeProjects;
+  const confirmations = Array.isArray(value.confirmations)
+    ? value.confirmations.map((record) => isRecord(record) && record.actorId === undefined && typeof record.userId === "number"
+      ? { ...record, actorId: telegramActorId(record.userId) } : record)
+    : value.confirmations;
+  const sessions = isRecord(value.sessions)
+    ? Object.fromEntries(Object.entries(value.sessions).map(([projectId, session]) => {
+        if (!isRecord(session) || !isRecord(session.pendingQuestion)) return [projectId, session];
+        const question = session.pendingQuestion;
+        return typeof question.userId === "number" && question.actorId === undefined
+          ? [projectId, { ...session, pendingQuestion: { ...question, actorId: telegramActorId(question.userId) } }]
+          : [projectId, session];
+      }))
+    : value.sessions;
+  return { ...value, activeProjects, confirmations, sessions };
 }
 
 function assertTestSummary(value: unknown): void {

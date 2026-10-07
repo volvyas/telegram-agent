@@ -15,6 +15,25 @@ function project(agent?: ProjectConfig["agent"]): ProjectConfig {
 }
 
 describe("ModelProviderResolver", () => {
+  it("maps a per-model context budget and preserves legacy defaults for other projects", () => {
+    const resolver = new ModelProviderResolver(new Map([["local", {
+      type: "responses", name: "Local", baseUrl: "http://127.0.0.1:8080/v1", wireApi: "responses",
+    }]]), new ModelProviderSecrets(new Map()));
+    const resolved = resolver.resolve(project({ provider: "local", model: "qwen", context: {
+      windowTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 2048,
+    } }));
+    expect(resolved.config).toMatchObject({ model_context_window: 32768, model_auto_compact_token_limit: 26624 });
+    expect(resolver.resolve(project({ provider: "local", model: "another-model" })).config.model_context_window).toBeUndefined();
+    expect(resolver.resolve(project()).config.model_auto_compact_token_limit).toBeUndefined();
+  });
+
+  it("caps the compaction threshold at 90 percent when configured reserves are smaller", () => {
+    const resolver = new ModelProviderResolver(new Map([["local", { type: "codex-builtin", provider: "ollama" }]]), new ModelProviderSecrets(new Map()));
+    expect(resolver.resolve(project({ provider: "local", model: "model", context: {
+      windowTokens: 10000, outputReserveTokens: 100, safetyMarginTokens: 100,
+    } })).config.model_auto_compact_token_limit).toBe(9000);
+  });
+
   it.each([
     ["openai", { type: "codex-builtin", provider: "openai" }],
     ["ollama", { type: "codex-builtin", provider: "ollama" }],

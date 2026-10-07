@@ -3,6 +3,7 @@ import type { ModelProviderMap } from "../config/ProjectConfig.js";
 import { createAgentIdentity, legacyOpenAiAgentIdentity, type AgentIdentity } from "../domain/AgentIdentity.js";
 import type { AgentSession, PendingAgentQuestion } from "../domain/AgentSession.js";
 import type { PersistedPendingQuestion, PersistedSessionRecord, Storage } from "../storage/Storage.js";
+import { actorIdFromLegacyUserId } from "../domain/Actor.js";
 
 export interface SessionProjectRegistry {
   require(projectId: string): ProjectConfig;
@@ -228,11 +229,12 @@ function sameIdentity(left: AgentIdentity | undefined, right: AgentIdentity): bo
 }
 
 function toPersistedQuestion(question: PendingAgentQuestion): PersistedPendingQuestion {
+  const actorId = actorIdFromLegacyUserId(question.userId);
   return {
     questionId: question.questionId,
     question: question.question,
     choices: [...question.choices],
-    ...(question.userId === undefined ? {} : { userId: question.userId }),
+    ...(actorId === undefined ? {} : { actorId, userId: question.userId }),
     createdAt: question.createdAt,
   };
 }
@@ -242,6 +244,7 @@ function toAgentQuestion(question: PersistedPendingQuestion): PendingAgentQuesti
     questionId: question.questionId,
     question: question.question,
     choices: Object.freeze([...question.choices]),
+    ...(question.actorId === undefined ? {} : { actorId: question.actorId }),
     ...(question.userId === undefined ? {} : { userId: question.userId }),
     createdAt: question.createdAt,
   });

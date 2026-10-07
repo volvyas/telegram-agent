@@ -37,6 +37,12 @@ import { IssueTrackerHandler } from "../telegram/handlers/IssueTrackerHandler.js
 import { GitHubIssueWriter } from "../issues/GitHubIssueWriter.js";
 import { IssueCreationService } from "../issues/IssueCreationService.js";
 import { IssueCreationHandler } from "../telegram/handlers/IssueCreationHandler.js";
+import { TransportGroup } from "./ApplicationTransport.js";
+import { WebServer } from "../web/WebServer.js";
+import { WebAuthService } from "../web/WebAuthService.js";
+import { WebSessionStore } from "../web/WebSessionStore.js";
+import { createWebRouteHandler } from "../web/WebRoutes.js";
+import { AgentEventHub } from "../application/AgentEventHub.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -137,6 +143,7 @@ export class Application {
       }),
     ] as const));
     const progressReporter = new ProgressReporter();
+    const eventHub = new AgentEventHub();
     const gitService = new GitService();
     const agentManager = new AgentManager((projectId) => {
       const adapter = adapters.get(projectId);
@@ -146,7 +153,7 @@ export class Application {
       sessionStore: sessionManager,
       gitService,
       taskStore: taskManager,
-      onEvent: (event) => progressReporter.onEvent(event),
+      onEvent: (event) => { progressReporter.onEvent(event); eventHub.publish(event); },
     });
     const dashboardKeyboard = new DashboardKeyboard();
     const projectHandler = new ProjectHandler(projectManager, undefined, storage, dashboardKeyboard);
@@ -212,12 +219,41 @@ export class Application {
       commitHandler,
       issueTrackerHandler,
     );
-    const bot = new TelegramBot({
-      token: config.telegramBotToken,
-      authGuard: new AuthGuard(config.telegramAllowedUserIds),
-      commandRouter,
-      logger,
-    });
+    const telegramBot: ApplicationBot | undefined = config.telegramEnabled
+      ? new TelegramBot({
+          token: config.telegramBotToken,
+          authGuard: new AuthGuard(config.telegramAllowedUserIds),
+          commandRouter,
+          logger,
+        })
+      : undefined;
+    const webUseCases = {
+      projects: {
+        list: async () => projectManager.list(),
+        select: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => projectManager.require(projectId),
+      },
+      agent: {
+        status: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => agentManager.getStatus(projectId),
+        startTask: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string, prompt: string) => agentManager.startTask(projectId, prompt) as unknown as Promise<import("../storage/Storage.js").PersistedTaskRecord>,
+        answer: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string, questionId: string, answer: string) => agentManager.answerQuestion(projectId, questionId, answer) as unknown as Promise<import("../storage/Storage.js").PersistedTaskRecord>,
+        stop: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => agentManager.stop(projectId),
+        events: async function* () { /* SSE is fed by the process-local event hub. */ },
+      },
+      git: {
+        status: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => gitService.getStatus(projectManager.require(projectId).path),
+        diff: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => gitService.getDiff(projectManager.require(projectId).path),
+        log: async () => ({ entries: [] }),
+      },
+      test: { run: async () => ({ status: "not_configured" }) },
+      confirmations: { request: async () => ({ error: "not_configured" }), consume: async () => ({ error: "not_configured" }) },
+    } satisfies import("../application/UseCases.js").ApplicationUseCases;
+    const webServer = config.webEnabled && config.web !== undefined
+      ? new WebServer({ config: config.web, auth: new WebAuthService(config.web.passwordHash, new WebSessionStore()), staticDirectory: resolve(options.cwd ?? process.cwd(), "src/web/public"), eventHub, requestHandler: createWebRouteHandler(webUseCases) })
+      : undefined;
+    const bot: ApplicationBot = new TransportGroup([
+      ...(telegramBot === undefined ? [] : [telegramBot]),
+      ...(webServer === undefined ? [] : [webServer]),
+    ]);
 
     return new Application({
       agentManager,

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Remote</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main>
+    <header class="topbar"><div><p class="eyebrow">CODEX REMOTE</p><h1>Operator console</h1></div><span class="connection"><i></i> Local gateway</span></header>
+    <section id="login-panel" class="panel login-panel">
+      <p class="eyebrow">SECURE ACCESS</p><h2>Sign in to your gateway</h2><p class="muted">Use the operator password configured for this instance.</p>
+      <form id="login-form"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required><button type="submit">Sign in</button><p id="login-error" class="error" role="alert" hidden>Unable to sign in.</p></form>
+    </section>
+    <section id="dashboard" hidden aria-live="polite">
+      <div class="toolbar panel"><div class="project-picker"><label for="project">Project</label><select id="project"></select><p id="codex-home" class="codex-home">Codex: default</p></div><span id="status" class="status-pill">Idle</span><button id="stop" class="button-danger" type="button">Stop task</button></div>
+      <div class="grid"><section class="panel task-panel"><div class="panel-heading"><div><p class="eyebrow">NEW TASK</p><h2>What should the agent do?</h2></div></div><form id="task-form"><label for="prompt">Task prompt</label><textarea id="prompt" rows="8" maxlength="12000" placeholder="Describe the change, investigation, or test you want the agent to perform…" required></textarea><div class="form-footer"><span class="muted">The selected project is used automatically.</span><button type="submit">Run task <span aria-hidden="true">→</span></button></div></form></section><section class="panel result-panel"><div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h2>Latest result</h2></div></div><div id="result" class="result-empty">No task has been run yet.</div></section></div>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

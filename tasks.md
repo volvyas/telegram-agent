@@ -1320,7 +1320,7 @@ cancellation, interrupted/malformed streams, provider mapping для OpenAI/
 Ollama/LM Studio/custom Responses та credential/reasoning/path redaction.
 Integration не потребує жодного встановленого local runtime.
 
-### [ ] DEV-071 — Документація та live acceptance трьох local runtimes
+### [x] DEV-071 — Документація та live acceptance трьох local runtimes
 
 **Залежить від:** DEV-070.
 
@@ -1353,6 +1353,18 @@ repository read, bounded commands, exact file creation, completion, continuation
 22.598 s. Один recoverable item error перед кожним completed turn зафіксовано як
 DEV-081. Ollama, LM Studio, реальний Telegram `/stop`, process restart і
 cloud/local switching позначені `N/A`, тому задача залишається відкритою.
+
+**Закрито за рішенням користувача 2026-10-06.** Наведені вище результати й
+`N/A` збережено як історичні свідчення; додатковий live PASS не заявляється.
+Ігнорування `namespace` сервером досліджується окремо: DEV-082 — аналіз впливу,
+DEV-083 — пошук і перевірка рішення (див. `issues.md`). DEV-081 залишається
+окремою задачею на recoverable item error.
+
+**Follow-up за trace analysis, 2026-10-07:** DEV-085 — завчасна compaction
+історії із запасом контексту для output; DEV-086 — незавершені tool calls,
+неправильний completion status і HTTP 500 при повторній передачі історії.
+Опис, evidence та acceptance criteria — у `issues.md`; DEV-071 не відкривається
+повторно. Обробка reconnect status у gateway ведеться окремо в DEV-084.
 
 **Готово, коли:** build/test/security suites зелені; live matrix явно має
 PASS/FAIL/N/A для кожного runtime і capability; щонайменше configured remote
@@ -1410,7 +1422,7 @@ loopback/Unix bind, exact `WEB_PUBLIC_URL=https://...` і documented trusted
 proxy boundary. `.env`, private key та інші secrets мають належати service user
 і бути недоступними group/others.
 
-### [ ] DEV-072 — Зафіксувати Web UI architecture і threat model
+### [x] DEV-072 — Зафіксувати Web UI architecture і threat model
 
 **Результат:** ADR у `docs/architecture.md` і Web-specific доповнення
 `docs/security.md`.
@@ -1439,7 +1451,7 @@ dependency/security trade-offs; threat model має mitigation для кожно
 route matrix вказує auth, CSRF, fresh-auth і confirmation requirements без
 дублювання business logic у transport layer.
 
-### [ ] DEV-073 — Ввести channel-neutral actor і application use cases
+### [x] DEV-073 — Ввести channel-neutral actor і application use cases
 
 **Залежить від:** DEV-072. **Types/classes:** `ActorId`, `ActorContext`,
 application-level project/task/git/test/confirmation use cases, event hub.
@@ -1468,7 +1480,7 @@ actor A не може читати/answer/confirm action actor B; migration зб
 Telegram selections; fake Web adapter може пройти select → task → events →
 result без імпорту з `src/telegram`.
 
-### [ ] DEV-074 — Зробити Telegram і Web незалежно optional transports
+### [x] DEV-074 — Зробити Telegram і Web незалежно optional transports
 
 **Залежить від:** DEV-073. **Класи:** доповнення `AppConfig`/`ConfigLoader`,
 `ApplicationTransport`, refactor `Application` composition root.
@@ -1492,7 +1504,7 @@ explicit Telegram-only, Web-only без Telegram secrets, обидва transport
 partial invalid config, обидва disabled, failure другого transport і graceful
 shutdown без leaked listener/process.
 
-### [ ] DEV-075 — Реалізувати password authentication і in-memory web sessions
+### [x] DEV-075 — Реалізувати password authentication і in-memory web sessions
 
 **Залежить від:** DEV-072, DEV-074. **Класи:** `PasswordVerifier`,
 `WebSessionStore`, `WebAuthService`, login/logout routes і password-hash CLI.
@@ -1524,7 +1536,7 @@ verification boundary, rate limiting, session fixation/rotation, idle/absolute
 expiry, logout, restart revocation, cookie attributes, bounded session cleanup
 і redaction; жоден test capture не містить plaintext password/session ID.
 
-### [ ] DEV-076 — Реалізувати HTTPS-only production WebServer
+### [x] DEV-076 — Реалізувати HTTPS-only production WebServer
 
 **Залежить від:** DEV-074–075. **Клас:** `WebServer`, TLS/proxy configuration,
 security middleware.
@@ -1555,7 +1567,7 @@ Host/Origin validation і security headers; production відмовляєтьс�
 з HTTP/public bind, missing TLS, insecure key permissions або spoofed forwarded
 headers; slow/oversized/malformed requests bounded і не блокують shutdown.
 
-### [ ] DEV-077 — Реалізувати authenticated Web dashboard та read/task flow
+### [x] DEV-077 — Реалізувати authenticated Web dashboard та read/task flow
 
 **Залежить від:** DEV-073, DEV-075–076.
 
@@ -1587,7 +1599,7 @@ refresh/SSE reconnect не дублює operation; unauthorized/cross-project/CS
 wrong-origin requests не викликають service side effects; XSS fixtures
 відображаються як inert text.
 
-### [ ] DEV-078 — Додати Web confirmations і step-up authentication
+### [x] DEV-078 — Додати Web confirmations і step-up authentication
 
 **Залежить від:** DEV-073, DEV-077.
 
@@ -1611,7 +1623,7 @@ project/session, CSRF, stale preview, payload tampering, expiry, replay, logout,
 restart, password rotation, fresh-auth expiry і concurrent tabs; Telegram і Web
 викликають одну operation policy/confirmation implementation.
 
-### [ ] DEV-079 — Провести Web security і resilience regression review
+### [x] DEV-079 — Провести Web security і resilience regression review
 
 **Залежить від:** DEV-075–078.
 

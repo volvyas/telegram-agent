@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentRunId, AgentThreadId } from "../agent/AgentEvent.js";
 import type { AgentState } from "../agent/AgentState.js";
 import type { AgentIdentity } from "./AgentIdentity.js";
+import type { ActorId } from "./Actor.js";
 
 /** A question that terminates a turn and must be answered before it can resume. */
 export interface PendingAgentQuestion {
@@ -8,6 +9,7 @@ export interface PendingAgentQuestion {
   readonly question: string;
   readonly choices: readonly string[];
   readonly userId?: number;
+  readonly actorId?: ActorId;
   readonly createdAt: string;
 }
 

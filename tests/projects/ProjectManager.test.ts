@@ -21,6 +21,34 @@ afterEach(async () => {
 });
 
 describe("ProjectManager", () => {
+  it("loads an immutable model-specific context budget", async () => {
+    const path = await createGitRepository("context");
+    const context = { windowTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 2048 };
+    const manager = await ProjectManager.fromDocument({
+      modelProviders: { local: { type: "codex-builtin", provider: "ollama" } },
+      projects: { context: { ...projectDocument("Context", path, ["task"]), agent: { provider: "local", model: "qwen", context } } },
+    });
+    expect(manager.require("context").agent?.context).toEqual(context);
+    expect(Object.isFrozen(manager.require("context").agent?.context)).toBe(true);
+  });
+
+  it.each([
+    null, {}, { windowTokens: "32768", outputReserveTokens: 4096, safetyMarginTokens: 2048 },
+    { windowTokens: 32768, outputReserveTokens: 0, safetyMarginTokens: 2048 },
+    { windowTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: -1 },
+    { windowTokens: 32768, outputReserveTokens: 4096.5, safetyMarginTokens: 2048 },
+    { windowTokens: 100, outputReserveTokens: 50, safetyMarginTokens: 50 },
+    { windowTokens: 100, outputReserveTokens: 101, safetyMarginTokens: 1 },
+    { windowTokens: Number.MAX_SAFE_INTEGER + 1, outputReserveTokens: 1, safetyMarginTokens: 1 },
+    { windowTokens: 32768, outputReserveTokens: 4096, safetyMarginTokens: 2048, unknown: true },
+  ])("rejects invalid context budgets: %j", async (context) => {
+    const path = await createGitRepository("bad-context");
+    await expect(ProjectManager.fromDocument({
+      modelProviders: { local: { type: "codex-builtin", provider: "ollama" } },
+      projects: { test: { ...projectDocument("Test", path, ["task"]), agent: { provider: "local", model: "qwen", context } } },
+    })).rejects.toBeInstanceOf(ProjectConfigError);
+  });
+
   it("loads, canonicalizes, lists and retrieves valid projects", async () => {
     const first = await createGitRepository("first");
     const second = await createGitRepository("second");

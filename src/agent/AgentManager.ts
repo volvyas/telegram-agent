@@ -15,6 +15,7 @@ import type { CodingAgent } from "./CodingAgent.js";
 import type { PersistedTaskRecord, PersistedTaskStatus } from "../storage/Storage.js";
 import { summarizeGit, summarizePrompt, type FinishTaskInput } from "../tasks/TaskManager.js";
 import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../policy/OperationPolicy.js";
+import { telegramActorId } from "../domain/Actor.js";
 
 export interface AgentProjectRegistry {
   require(projectId: string): ProjectConfig;
@@ -550,15 +551,18 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         continue;
       }
 
-      terminalEvent = this.#applyEvent(session, event) ?? terminalEvent;
+      const ownedEvent: AgentEvent = event.ownerActorId === undefined && userId !== undefined
+        ? { ...event, ownerActorId: telegramActorId(userId), originActorId: telegramActorId(userId) }
+        : event;
+      terminalEvent = this.#applyEvent(session, ownedEvent) ?? terminalEvent;
       this.#updateSnapshot(session, {
         state: session.machine.state,
-        lastEvent: event,
-        ...(event.type === "thread_started" ? { threadId: event.threadId } : {}),
-        ...(event.type === "question" ? { pendingQuestion: toPendingQuestion(event, userId) } : {}),
+        lastEvent: ownedEvent,
+        ...(ownedEvent.type === "thread_started" ? { threadId: ownedEvent.threadId } : {}),
+        ...(ownedEvent.type === "question" ? { pendingQuestion: toPendingQuestion(ownedEvent, userId) } : {}),
       });
       await this.#persistSession(session);
-      await this.#onEvent?.(event);
+      await this.#onEvent?.(ownedEvent);
     }
 
     if (terminalEvent === undefined) {

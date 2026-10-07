@@ -3,6 +3,8 @@ import type { ModelProviderSecrets } from "../../config/ConfigLoader.js";
 
 export interface CodexProviderConfigValue {
   readonly model_provider: string;
+  readonly model_context_window?: number;
+  readonly model_auto_compact_token_limit?: number;
   readonly model_providers?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
@@ -64,7 +66,16 @@ export class ModelProviderResolver {
     return Object.freeze({
       providerId: agent.provider,
       model: agent.model,
-      config: createProviderConfig(agent.provider, provider),
+      config: Object.freeze({
+        ...createProviderConfig(agent.provider, provider),
+        ...(agent.context === undefined ? {} : {
+          model_context_window: agent.context.windowTokens,
+          model_auto_compact_token_limit: Math.min(
+            agent.context.windowTokens - agent.context.outputReserveTokens - agent.context.safetyMarginTokens,
+            Math.floor(agent.context.windowTokens * 0.9),
+          ),
+        }),
+      }),
       ...(provider.type === "responses" && provider.apiKeyEnv !== undefined
         ? { credential: this.resolveCredential(agent.provider, provider.apiKeyEnv) }
         : {}),

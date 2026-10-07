@@ -6,6 +6,41 @@ gateway у поточній реалізації. Він не є обіцянк�
 
 ## Assets and trust boundaries
 
+## Web-specific threat model (DEV-072)
+
+The Web UI is an exposed agent control plane even when deployed behind a local
+proxy. The browser is untrusted until authenticated, and agent/Git/issue
+output is untrusted content.
+
+| Threat | Required mitigation |
+| --- | --- |
+| Password guessing | Argon2id (or parameterized scrypt fallback) verifier from protected environment; generic login errors, bounded body, rate limiting/backoff and no password logging. |
+| Session theft/fixation | Opaque random process-local cookies, Secure/HttpOnly/SameSite settings, rotation on login and privilege change; restart invalidates all sessions. |
+| CSRF | Same-origin routes plus Origin/Referer validation and a per-session CSRF token on every state-changing request; SSE is read-only. |
+| XSS from agent/Git/issue output | JSON by default, context-appropriate output encoding, no unsafe HTML insertion, CSP without `unsafe-eval`, and no inline remote assets. |
+| Clickjacking and caching | `frame-ancestors 'none'`/`X-Frame-Options: DENY`, `Cache-Control: no-store` for authenticated responses and sensitive SSE. |
+| Host/proxy spoofing | Allowlisted Host/public URL; forwarded headers are ignored except at the explicitly trusted reverse-proxy boundary. |
+| Request smuggling/oversized bodies | One framework parser, strict content length/type, bounded body and header limits, request timeout, and no ambiguous transfer handling. |
+| Slow clients/SSE exhaustion | Bounded subscriber and per-client queue limits, heartbeat, write timeout, disconnect cleanup and shutdown cancellation. |
+| Cross-project or cross-actor leakage | Every use case authorizes actor + project; event hub filters both; route payloads contain opaque IDs only; no client-supplied actor ID. |
+| Confirmation/policy bypass | Web invokes the same application use case and policy/lock/confirmation service as Telegram; sensitive web confirmations bind actor, project and opaque security context and never survive restart/session rotation. |
+| TLS downgrade | Direct mode requires application TLS; reverse-proxy mode requires loopback/Unix bind and trusted HTTPS proxy; production plain HTTP public/LAN bind is rejected. |
+
+### Route/use-case matrix
+
+| Capability | Auth | CSRF | Fresh auth | Confirmation |
+| --- | --- | --- | --- | --- |
+| Project selection, dashboard/status | session | no for GET | no | no |
+| Task, continue, answer, stop, test | session | yes | no | policy-dependent |
+| Git status/diff/log | session | no for GET | no | no |
+| Commit preview | session | yes | no | no |
+| Commit confirmation | session | yes | yes | required, one-shot |
+| Bug tracker read | session | no for GET | no | no |
+| Bug tracker write | session | yes | yes | required when policy marks mutation dangerous |
+
+All rows resolve to the same application use cases as the equivalent Telegram
+flow; a Web route cannot select a lower-privilege service or bypass policy.
+
 Захищаються Telegram bot token, Codex credentials, thread/session identifiers,
 configured repository contents, runtime state, diffs і command output. Довірені
 inputs: локальні `.env`, `projects.json`, executable/args у project config та

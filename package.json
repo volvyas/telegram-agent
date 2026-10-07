@@ -17,7 +17,9 @@
     "test": "vitest run",
     "test:security": "vitest run tests/security",
     "probe:provider": "tsx scripts/probe-provider.ts",
+    "log:provider": "tsx scripts/log-provider.ts",
     "accept:dev071": "tsx scripts/dev071-live.mts"
+    ,"generate:web-password-hash": "tsx scripts/generate-web-password-hash.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",

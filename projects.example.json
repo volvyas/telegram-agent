@@ -25,7 +25,12 @@
       "path": "/home/user/projects/motor-backend",
       "agent": {
         "provider": "home-llama",
-        "model": "Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf"
+        "model": "Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf",
+        "context": {
+          "windowTokens": 32768,
+          "outputReserveTokens": 4096,
+          "safetyMarginTokens": 2048
+        }
       },
       "codexHome": "/home/service-user/.local/share/codex-remote/motor-codex-home",
       "testCommand": {

@@ -1,3 +1,5 @@
+import type { ActorId } from "../domain/Actor.js";
+
 export type AgentRunId = string;
 export type AgentThreadId = string;
 
@@ -5,6 +7,8 @@ export interface AgentEventBase {
   readonly runId: AgentRunId;
   readonly projectId: string;
   readonly occurredAt: string;
+  readonly ownerActorId?: ActorId;
+  readonly originActorId?: ActorId;
 }
 
 export type AgentEvent =

@@ -39,6 +39,14 @@ export type ModelProviderMap = ReadonlyMap<string, ModelProviderConfig>;
 export interface ProjectAgentConfig {
   readonly provider: string;
   readonly model: string;
+  readonly context?: AgentContextConfig;
+}
+
+/** Per project/provider/model: reserve is budgeting headroom, not a generation cap. */
+export interface AgentContextConfig {
+  readonly windowTokens: number;
+  readonly outputReserveTokens: number;
+  readonly safetyMarginTokens: number;
 }
 
 export const MODEL_PROVIDER_RUNTIME_DEFAULTS = Object.freeze({

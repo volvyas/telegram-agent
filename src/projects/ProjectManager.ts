@@ -249,7 +249,7 @@ function parseOptionalAgent(
 ): ProjectConfig["agent"] {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw invalidProject(projectId, "agent must be an object");
-  const keys = new Set(["provider", "model"]);
+  const keys = new Set(["provider", "model", "context"]);
   if (Object.keys(value).some((key) => !keys.has(key))) {
     throw invalidProject(projectId, "agent contains an unknown setting");
   }
@@ -262,7 +262,24 @@ function parseOptionalAgent(
       { projectId },
     );
   }
-  return Object.freeze({ provider, model });
+  const context = parseAgentContext(value.context, projectId);
+  return Object.freeze({ provider, model, ...(context === undefined ? {} : { context }) });
+}
+
+function parseAgentContext(value: unknown, projectId: string): NonNullable<ProjectConfig["agent"]>["context"] {
+  if (value === undefined) return undefined;
+  const keys = ["windowTokens", "outputReserveTokens", "safetyMarginTokens"];
+  if (!isRecord(value) || Object.keys(value).some((key) => !keys.includes(key)) ||
+    keys.some((key) => typeof value[key] !== "number" || !Number.isSafeInteger(value[key]) || value[key] <= 0)) {
+    throw invalidProject(projectId, "agent.context requires positive integer windowTokens, outputReserveTokens and safetyMarginTokens");
+  }
+  const windowTokens = value.windowTokens as number;
+  const outputReserveTokens = value.outputReserveTokens as number;
+  const safetyMarginTokens = value.safetyMarginTokens as number;
+  if (outputReserveTokens >= windowTokens || safetyMarginTokens >= windowTokens - outputReserveTokens) {
+    throw invalidProject(projectId, "agent.context reserves must leave a positive input budget");
+  }
+  return Object.freeze({ windowTokens, outputReserveTokens, safetyMarginTokens });
 }
 
 function assertProviderKeys(

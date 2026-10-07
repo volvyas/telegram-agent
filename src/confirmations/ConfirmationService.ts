@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { Confirmation, Storage } from "../storage/Storage.js";
+import { telegramActorId, type ActorId } from "../domain/Actor.js";
 
 export type ConfirmationDecision = "allow" | "deny";
 
@@ -31,7 +32,8 @@ export class ConfirmationError extends Error {
 
 export interface ConsumeConfirmationInput {
   readonly id: string;
-  readonly userId: number;
+  readonly actorId?: ActorId;
+  readonly userId?: number;
   readonly projectId: string;
   readonly decision: ConfirmationDecision;
 }
@@ -54,11 +56,12 @@ export class ConfirmationService {
   }
 
   public async request(
-    userId: number,
+    actor: ActorId | number,
     projectId: string,
     operation: string,
   ): Promise<Confirmation> {
-    validateIdentity(userId, projectId, operation);
+    const actorId = typeof actor === "number" ? telegramActorId(actor) : actor;
+    validateIdentity(actorId, projectId, operation);
     const now = this.#clock();
     const createdAt = now.toISOString();
     const expiresAt = new Date(now.valueOf() + this.#ttlMs).toISOString();
@@ -78,7 +81,10 @@ export class ConfirmationService {
         if (id.length < 16 || id.length > 256) {
           throw new ConfirmationError("CONFIRMATION_INVALID", "Confirmation ID is not opaque enough");
         }
-        confirmation = Object.freeze({ id, userId, projectId, operation, createdAt, expiresAt });
+        confirmation = Object.freeze({
+          id, actorId, projectId, operation, createdAt, expiresAt,
+          ...(typeof actor === "number" ? { userId: actor } : {}),
+        });
         return [...state.confirmations, confirmation];
       })(),
     }));
@@ -87,12 +93,12 @@ export class ConfirmationService {
   }
 
   /** Alias emphasizing that the returned value is a pending confirmation. */
-  public create(userId: number, projectId: string, operation: string): Promise<Confirmation> {
-    return this.request(userId, projectId, operation);
+  public create(actor: ActorId | number, projectId: string, operation: string): Promise<Confirmation> {
+    return this.request(actor, projectId, operation);
   }
 
-  public requestConfirmation(userId: number, projectId: string, operation: string): Promise<Confirmation> {
-    return this.request(userId, projectId, operation);
+  public requestConfirmation(actor: ActorId | number, projectId: string, operation: string): Promise<Confirmation> {
+    return this.request(actor, projectId, operation);
   }
 
   public async get(id: string): Promise<Confirmation | undefined> {
@@ -125,7 +131,7 @@ export class ConfirmationService {
     decision?: ConfirmationDecision,
   ): Promise<ConfirmationDecision> {
     const input: ConsumeConfirmationInput = typeof inputOrId === "string"
-      ? { id: inputOrId, userId: userId as number, projectId: projectId as string, decision: decision as ConfirmationDecision }
+      ? { id: inputOrId, actorId: telegramActorId(userId as number), ...(userId === undefined ? {} : { userId }), projectId: projectId as string, decision: decision as ConfirmationDecision }
       : inputOrId;
     if (input.decision !== "allow" && input.decision !== "deny") {
       throw new ConfirmationError("CONFIRMATION_INVALID", "Confirmation decision is invalid");
@@ -136,7 +142,8 @@ export class ConfirmationService {
       if (index < 0) throw new ConfirmationError("CONFIRMATION_NOT_FOUND", "Confirmation is no longer pending");
       const current = state.confirmations[index];
       if (current === undefined) throw new ConfirmationError("CONFIRMATION_NOT_FOUND", "Confirmation is no longer pending");
-      if (current.userId !== input.userId) throw new ConfirmationError("CONFIRMATION_WRONG_USER", "Confirmation belongs to another user");
+      const actorId = input.actorId ?? (input.userId === undefined ? undefined : telegramActorId(input.userId));
+      if (actorId === undefined || current.actorId !== actorId) throw new ConfirmationError("CONFIRMATION_WRONG_USER", "Confirmation belongs to another actor");
       if (current.projectId !== input.projectId) throw new ConfirmationError("CONFIRMATION_WRONG_PROJECT", "Confirmation belongs to another project");
       if (this.#clock().valueOf() >= new Date(current.expiresAt).valueOf()) {
         return { ...state, confirmations: state.confirmations.filter((_, itemIndex) => itemIndex !== index) };
@@ -153,8 +160,8 @@ export class ConfirmationService {
   }
 }
 
-function validateIdentity(userId: number, projectId: string, operation: string): void {
-  if (!Number.isSafeInteger(userId) || userId < 0 || projectId.length === 0 || operation.length === 0) {
+function validateIdentity(actorId: ActorId, projectId: string, operation: string): void {
+  if ((actorId !== "web:operator" && !/^telegram:[0-9]+$/u.test(actorId)) || projectId.length === 0 || operation.length === 0) {
     throw new ConfirmationError("CONFIRMATION_INVALID", "Confirmation identity is invalid");
   }
 }

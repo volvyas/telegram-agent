@@ -18,6 +18,57 @@
 7. User input ніколи не стає shell command або path.
 8. Persisted state записується через storage interface.
 9. Безпека визначається technical sandbox/policy, а не лише prompt rules.
+10. Transport-neutral application use cases receive an `ActorContext`; Telegram
+    and Web are adapters and never provide an actor ID supplied by the client.
+
+## Web UI ADR (DEV-072)
+
+**Decision.** The first Web UI uses a maintained, server-owned Node HTTP
+framework with schema validation and explicit lifecycle hooks (Fastify is the
+selected bounded framework), a local static bundle served by the same process,
+same-origin JSON routes, and a same-origin SSE endpoint for progress/events.
+There is no CDN, remote font/script, analytics, client-side secret, or separate
+frontend deployment. A minimal hand-written HTTPS server would reduce
+dependencies but would require reimplementing body limits, routing, validation,
+graceful shutdown and security defaults; a larger full-stack framework would
+add an unnecessary runtime and deployment boundary. The framework dependency
+set is therefore limited to Fastify, its official static serving and schema
+validation support, and the existing application libraries.
+
+The browser is an operator console, not a second domain implementation. Web
+routes call application use cases; they do not call `AgentManager`, process
+runners, Git adapters, or confirmation storage directly. SSE is bounded and
+process-local: each subscription is keyed by the authenticated actor and
+project, has a bounded subscriber count and disconnect cleanup, and emits
+metadata-filtered `AgentEvent`s only. Slow clients are disconnected after the
+bounded queue is full.
+
+Production Web deployment has two explicit modes. `direct` owns the TLS
+listener and certificate/key. `reverse-proxy` binds only loopback or a Unix
+socket and trusts only the documented local proxy boundary. Production never
+binds plain HTTP on LAN/public interfaces, accepts arbitrary forwarded-proto
+headers, or starts without an HTTPS public URL. Development HTTP requires an
+explicit loopback opt-in. Shutdown stops accepting requests, closes SSE
+subscriptions, cancels active turns, and flushes storage.
+
+## Channel-neutral application boundary (DEV-073)
+
+The canonical actor identities are `telegram:<numeric-id>` and
+`web:operator`. `ActorContext` additionally carries a process-local opaque
+security-context ID for browser-sensitive pending actions. Actor IDs are
+derived at the authenticated adapter boundary; request bodies, query strings
+and callback data cannot choose them. Active projects, pending questions,
+task ownership, event ownership and confirmations use the canonical actor.
+Persisted schema migration converts legacy numeric Telegram owners
+unambiguously and invalidates browser-bound actions after restart/session
+rotation.
+
+The application surface is: select project; get dashboard/status; start,
+continue, answer and stop task; read Git status/diff/log; run tests; preview
+and confirm commits; and read/write the configured issue tracker. These are
+shared use cases with one policy, project lock, validation, error and
+confirmation implementation. Telegram handlers and Web routes only translate
+transport input/output and attach their authenticated `ActorContext`.
 
 ## Context diagram
 

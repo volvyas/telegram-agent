@@ -6,6 +6,187 @@ history are preserved under their original IDs.
 
 ## Live acceptance defects
 
+### [ ] DEV-085 — Скорочувати історію до вичерпання контексту local provider
+
+**У роботі, offline milestone 2026-10-07:** додано validated `agent.context`
+(window/output reserve/safety margin), mapping у native Codex context/compaction
+settings та real CLI/SDK tests із loopback provider: threshold, cached usage,
+mid-turn tool history, restart/resume, failed compaction і stop. Для custom
+provider перевірений tool-free summarization через `/v1/responses`, не окремий
+`/responses/compact`. Production config не змінено. Залишаються hard preflight
+для oversized single input/result, context-specific recovery diagnostic та
+live acceptance на llama.cpp; задача не закрита. Деталі й checklist —
+`docs/local-model-integration.md`, розділ DEV-085.
+
+**Підстава, 2026-10-07:** у trace
+`95dd95da-2604-4b7d-a861-cfc3cf7ab53c` відповідь HTTP 200 містить
+`input_tokens=31613`, `output_tokens=1155`, `total_tokens=32768` та незавершені
+аргументи tool call. Capture не обрізаний, SHA-256 response збігається.
+Точне заповнення configured 32k context є сильним свідченням вичерпання
+контексту, але generation stop reason і server-side причина обриву ще
+потребують підтвердження. Просте збільшення context window не є повним рішенням.
+
+**Scope:** визначити й реалізувати підтримуваний шлях завчасної compaction
+історії через чинний Codex runtime, без власного LLM tool loop. Перевірити
+фактичні можливості встановлених CLI/SDK та local provider, включно з тим,
+чи працює compaction endpoint; не припускати підтримку за назвою config key.
+Додати validated provider/model-specific effective context limit, output reserve
+і safety margin; враховувати instructions, tool schemas, history та reasoning
+у бюджеті. Не ототожнювати bytes/characters із tokens або cached tokens із
+вільним контекстом. Не hardcode 32k для всіх моделей.
+
+Зберігати під час скорочення user constraints, незавершену задачу, істотні
+результати та цілісність tool-call/result pairs. Перевірити compaction усередині
+довгого turn, follow-up, resume після restart і project/provider isolation.
+Якщо безпечна compaction недоступна або не вдалася, явно зупиняти продовження
+з actionable diagnostic і пропозицією нового thread; не скидати історію тихо,
+не переключати provider та не вважати task завершеною.
+
+**Готово, коли:** deterministic tests покривають поріг compaction, output reserve,
+великий одиничний input/tool result, failure/unsupported compaction, cancellation
+і resume. Bounded live test на disposable repository з малим configured context
+перетинає поріг і продовжує task зі збереженими constraints та tool history,
+або дає контрольовану зупинку без пошкодженого виклику. У документації є supported
+config, sanitized token-budget evidence і fallback behavior; raw prompts,
+reasoning та production trace bodies не додаються до repository.
+
+### [ ] DEV-086 — Обробляти незавершені tool calls без повторних HTTP 500
+
+**Підстава, 2026-10-07:** trace `95dd95da-2604-4b7d-a861-cfc3cf7ab53c`
+повернув `response.output_item.done` для `exec_command` з arguments
+`{"cmd":"cd` і потім `response.completed`, попри невалідний вкладений JSON.
+У наступному trace `e698a2ec-845e-4e76-87d3-b841d8dc5874` зовнішній request
+JSON валідний; `input[90]` містить цей виклик, а `input[91]` — matching
+`function_call_output` із parse-error diagnostic. llama.cpp відхиляє таку
+історію HTTP 500: `Failed to parse tool call arguments as JSON`, column 11.
+Request/response hashes другого trace збігаються, capture не обрізаний.
+Trace `f898eebe-91eb-4131-973b-3250961a6c99` із розбіжністю request hash не
+використовувати як доказ структури оригінального wire request.
+
+**Scope:** відтворити й розмежувати обрив generation, server tool parser та
+неправильний completion status; отримати sanitized stop reason. Перевірити
+обробку invalid arguments у Responses output і в повторно переданій історії.
+Визначити правильний рівень fix (server/runtime/explicit compatibility layer)
+та реалізувати перевірене рішення без перетворення діагностичного logging proxy
+на прихований payload-rewriter. Remote production server не змінювати без
+окремого погодження; якщо потрібен upstream fix, зафіксувати reproduction,
+dependency і безпечний локальний fallback.
+
+**Очікувана поведінка:** неповні/невалідні аргументи не виконуються й не
+«ремонтуються» дописуванням лапок або вгадуванням команди. Partial SSE deltas
+не вважаються помилкою до завершення item/stream. Завершений невалідний call
+дає actionable diagnostic та bounded recovery або контрольовану зупинку;
+не повторювати без змін відому неприйнятну історію до вичерпання retries.
+Зберігати call IDs, matching results, коректні calls і відомості про вже
+виконані операції; recovery не повинен повторно виконувати side effects або
+тихо видаляти історію. `response.completed` сам по собі не доводить валідність
+аргументів tools.
+
+**Готово, коли:** fixtures/tests покривають escaping, malformed final arguments,
+обірваний SSE, valid fragmented arguments, кілька calls з одним пошкодженим,
+malformed call + error result у follow-up, stop/resume і bounded recovery.
+Перевірено відсутність виконання пошкодженої команди та повторних side effects;
+live reproduction на disposable repository більше не застрягає в HTTP 500
+loop і не показує false success. Evidence містить лише sanitized protocol facts.
+DEV-085 запобігає context exhaustion, але не замінює цю обробку; DEV-084
+стосується retry status у gateway, DEV-082/083 — окремої namespace compatibility.
+
+### [ ] DEV-084 — Не завершувати task помилкою під час Codex reconnect/retry
+
+**Виявлено 2026-10-06:** operator отримав `Task failed.` із повідомленням
+`Reconnecting... 1/5 (We're currently experiencing high demand, which may cause temporary errors.)`.
+Остання перевірена failed task — `TASK-0029` у `base-proto-ui`; збережена
+session identity вказує на local provider `home-llama`.
+
+**Підтверджено в коді:** `CodexEventMapper` перетворює будь-яку top-level
+подію `error` на `fatal: true`. `AgentManager` фіксує перший terminal outcome
+та ігнорує подальші events, а `TaskHandler` додає `Task failed.` до повідомлення.
+Якщо reconnect/retry приходить як top-level `error`, задача передчасно стає
+failed, а наступний успішний `turn.completed` не може відновити її результат.
+Фактичну форму retry event і подальший результат саме цього live turn ще
+потрібно підтвердити; успішне відновлення не вважається встановленим фактом.
+
+**Scope:** відтворити event sequence для встановлених Codex CLI/SDK і виправити
+класифікацію transient retry та terminal failure. Не покладатися лише на
+текст `high demand` і не робити всі `error` нефатальними. Причина початкового
+transport/provider збою не встановлена й не є предметом цього дефекту;
+зв'язок із namespace warning DEV-082 або item error DEV-081 не підтверджений.
+
+**Очікувана поведінка:** reconnect відображається як bounded sanitized
+progress/warning; task залишається active до фактичного terminal outcome.
+Успішне відновлення завершує task як completed, а вичерпання retries або
+справжня terminal error — як failed. Незавершений stream не видається за успіх.
+Зберегти cancellation semantics, persistence і per-project lock до завершення.
+
+**Готово, коли:** deterministic adapter/manager/handler regressions покривають
+retry → completed без false `Task failed`, кілька retries → terminal failure,
+справжню unrecoverable error, stream EOF без terminal outcome та stop під час
+reconnect без перезапису STOPPED пізніми events. Перевірені persisted state,
+один terminal result і можливість запуску наступної task. Bounded live recheck
+через local provider підтверджує правильний статус після retry; evidence
+містить sanitized event types/order без credentials, prompts або raw reasoning.
+
+### [ ] DEV-082 — Дослідити втрату namespace tools у Codex → llama.cpp
+
+**Підстава, 2026-10-06:** operator підтвердив, що сервер приймає запити,
+але ігнорує `namespace` із повідомленням
+`Unsupported response tool type 'namespace'`. DEV-071 закрита; цей аналіз
+ведеться окремо. Зв'язок із recoverable item error DEV-081 не встановлений.
+
+Зафіксувати versions Codex CLI/SDK, server build і model ID. На disposable
+repository відтворити запит реального Codex та записати sanitized inventory
+типів tools, namespace names і вкладених tool names. Визначити джерело кожного
+namespace (MCP, built-in або інша інтеграція) і які tools фактично доходять до
+моделі. Не зберігати credentials, prompts, repository contents чи raw reasoning.
+
+Порівняти звичайний function tool і той самий harmless tool у namespace;
+перевірити tool call → execution → matching result → final answer. Для
+repository read, shell, patch і tests окремо визначити фактичний вплив,
+підтверджений events, exit codes та filesystem assertions. Не робити висновок
+про втрату всіх tools лише з warning або про успіх лише з текстової відповіді.
+Перевірити прогалину чинного provider probe, який тестує flat function tools.
+
+**Результат:** розділ у `docs/local-model-integration.md` із reproduction,
+inventory, evidence matrix та розмежуванням підтверджених фактів і припущень.
+Production config/runtime у цій задачі не змінювати.
+
+**Готово, коли:** визначені конкретні пропущені tools та affected scenarios,
+мінімальний reproduction відрізняє unsupported namespace від model tool-use
+failure; evidence достатньо для вибору рішення в DEV-083. DEV-081 не вважати
+дублікатом без окремого доказу.
+
+### [ ] DEV-083 — Знайти й перевірити рішення для namespace compatibility
+
+**Залежить від:** DEV-082. **Scope:** дослідження варіантів і isolated proof of
+concept; production rollout оформлюється окремою implementation task.
+
+На основі inventory порівняти перевірені варіанти: версію/patch `llama.cpp` із
+потрібною підтримкою, фактично доступний сумісний режим Codex, explicit
+compatibility proxy. Відключення namespace допустиме як documented workaround
+лише для справді непотрібних tools; приховування warning не є рішенням.
+Не припускати існування config flag або підтримки в новому release без перевірки.
+
+Для перетворення namespace у flat tools перевірити збереження schemas,
+description, strict/custom tool semantics, унікальність імен та їх зворотне
+зіставлення. Перевірити однакові tool names у різних namespaces, call IDs,
+tool results, SSE completion, full-history continuation/resume, errors і
+cancellation. Непідтримувані типи мають давати явний diagnostic, а не тихо губитися.
+
+Виконати bounded proof of concept у disposable repository без зміни робочого
+`projects.json` або remote production server. Підтвердити виконання tool із
+раніше пропущеного namespace та відсутність регресій flat tools. Оцінити
+складність, підтримку версій, latency, credential routing і rollback; зберегти
+чинні sandbox/policy boundaries.
+
+**Результат:** decision record у `docs/local-model-integration.md`, порівняння
+варіантів, sanitized PoC evidence та окрема scoped task для реалізації обраного
+рішення й розширення provider probe namespace regression tests.
+
+**Готово, коли:** обраний варіант підтверджений tool-call/result loop і follow-up
+на цільовій конфігурації; або явно зафіксовано, чому жоден перевірений варіант
+не підходить і яка capability потрібна. Production rollout не видається за
+виконаний у межах дослідження.
+
 ### [ ] DEV-081 — Дослідити recoverable Codex item error з live `llama.cpp`
 
 **Виявлено під час DEV-071, 2026-10-05.** Кожен із повторених real SDK/CLI

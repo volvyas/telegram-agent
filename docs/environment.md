@@ -143,4 +143,25 @@ test, але не Phase 0.
 4. Визначити окремий `CODEX_HOME` для gateway або явно прийняти використання
    user-level Codex configuration. Рекомендовано окремий каталог поза project
    repository з permissions `0700` і окремим `codex login`.
+# Transport selection and Web authentication
 
+`TELEGRAM_ENABLED` and `WEB_ENABLED` select transports. If
+`TELEGRAM_ENABLED` is omitted, existing Telegram variables preserve the legacy
+Telegram-only behavior. At least one transport must be enabled. Web-only
+deployments set `TELEGRAM_ENABLED=false` and do not need Telegram secrets.
+
+Web requires `WEB_ENVIRONMENT`, `WEB_HOST`, `WEB_PORT`, `WEB_PUBLIC_URL`,
+`WEB_TLS_MODE`, and `WEB_PASSWORD_HASH`. Production requires an HTTPS public
+URL. `direct` mode requires certificate/key paths in production; development
+may explicitly use loopback HTTP. `reverse-proxy` mode requires a loopback or
+Unix-socket bind and does not use application certificate/key files.
+
+Generate the password verifier without putting the password in shell history:
+
+```sh
+npm run generate:web-password-hash
+```
+
+The command reads the password interactively or from stdin and prints only the
+bounded scrypt verifier. Passwords, sessions and CSRF material are never
+stored in `JsonStorage`.
