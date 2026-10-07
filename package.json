@@ -9,9 +9,9 @@
     "node": ">=24.13.0"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "NODE_OPTIONS=--disable-warning=DEP0040 tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/index.js",
+    "start": "NODE_OPTIONS=--disable-warning=DEP0040 node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "test": "vitest run",
