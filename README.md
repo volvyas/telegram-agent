@@ -66,6 +66,31 @@ CODEX_HOME=/home/service-user/.local/share/codex-remote/codex-home
 Окремий project може перевизначити profile у `projects.json` через absolute
 `codexHome`; якщо поле відсутнє, використовується цей global default.
 
+### Web-only deployment
+
+For a deployment without Telegram, set `TELEGRAM_ENABLED=false` and
+`WEB_ENABLED=true`; Telegram token and user IDs can be omitted completely:
+
+```dotenv
+TELEGRAM_ENABLED=false
+WEB_ENABLED=true
+WEB_ENVIRONMENT=development
+WEB_HOST=127.0.0.1
+WEB_PORT=8080
+WEB_PUBLIC_URL=http://127.0.0.1:8080
+WEB_TLS_MODE=direct
+WEB_PASSWORD_HASH=<output of npm run generate:web-password-hash>
+```
+
+Development HTTP is restricted to loopback and must never be exposed through a
+firewall or public proxy. Production requires `WEB_PUBLIC_URL=https://...`.
+Direct mode reads `WEB_TLS_CERT_PATH` and `WEB_TLS_KEY_PATH`; reverse-proxy mode
+must bind loopback or a Unix socket and leaves TLS termination to the explicitly
+trusted HTTPS proxy. Keep `.env`, hashes and private keys owned by the service
+user with mode `0600`; restart the service after password rotation, which also
+revokes all Web sessions. The service unit sets the targeted Node warning
+suppression required by the current grammY/node-fetch dependency chain.
+
 Підготуйте та автентифікуйте окремий Codex profile від імені service user:
 
 ```bash

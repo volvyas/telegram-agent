@@ -1,5 +1,48 @@
 # Live acceptance
 
+## DEV-080 — Web-only acceptance
+
+Status: **PARTIAL — host-level Web-only smoke passed; operator browser and live
+agent-flow evidence remain.** The deployment examples and Web-only environment contract are in
+`README.md`, `.env.example` and `docs/environment.md`. Use a disposable
+Web-only process with `TELEGRAM_ENABLED=false`, `WEB_ENABLED=true`, a generated
+password verifier and either loopback development HTTP or a real HTTPS direct /
+trusted reverse-proxy setup. Do not record passwords, cookies, CSRF values,
+private keys, tokens, full repository paths or raw agent output.
+
+Automated preflight:
+
+```sh
+chmod 600 .env
+npm run build
+npm test
+npm run test:security
+```
+
+Browser evidence to record as PASS/PARTIAL/N/A: login/logout, wrong-password
+backoff, refresh session behavior and restart revocation; project selection and
+Codex-home basename; task/status/result/stop; CSRF and wrong-Origin rejection;
+security headers/cookie attributes; and, for production, valid HTTPS plus
+rejection of plain public HTTP and spoofed forwarded headers. Full Telegram-only
+and simultaneous Web+Telegram regression remains a separate acceptance cell.
+
+Host-level smoke evidence, 2026-10-08:
+
+| Check | Result |
+| --- | --- |
+| Web-only process with `TELEGRAM_ENABLED=false` | PASS — listener started without Telegram transport |
+| `GET /health` | PASS — bounded `{"status":"ok"}` response |
+| `GET /` | PASS — local dashboard HTML served |
+| Security headers | PASS — CSP, no-store, nosniff, frame denial, referrer and permissions policies observed |
+| Real operator login/session | Pending — requires the operator’s configured password |
+| Real Codex task/progress/question/answer flow | Pending — requires browser and live model session |
+
+The focused security command currently has one sandbox-only regression: the
+child-Node stdout fixture in `SecurityRegression.test.ts` returns empty output
+when spawned with an empty environment in this managed runtime. It does not
+indicate shell execution; the marker remains absent. This needs a separate
+environment/task investigation before DEV-080 can be marked complete.
+
 ## DEV-071 — partial live acceptance (2026-10-05)
 
 Status: **PARTIAL — remote `llama.cpp` provider/SDK path passed; full Telegram
