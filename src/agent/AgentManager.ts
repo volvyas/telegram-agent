@@ -15,7 +15,7 @@ import type { CodingAgent } from "./CodingAgent.js";
 import type { PersistedTaskRecord, PersistedTaskStatus } from "../storage/Storage.js";
 import { summarizeGit, summarizePrompt, type FinishTaskInput } from "../tasks/TaskManager.js";
 import { DEFAULT_OPERATION_POLICY, type OperationPolicy } from "../policy/OperationPolicy.js";
-import { telegramActorId } from "../domain/Actor.js";
+import { telegramActorId, type ActorId } from "../domain/Actor.js";
 
 export interface AgentProjectRegistry {
   require(projectId: string): ProjectConfig;
@@ -135,7 +135,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   }
 
   /** Starts and consumes one complete agent turn. */
-  public async startTask(projectId: string, prompt: string, userId?: number): Promise<TaskRecord> {
+  public async startTask(projectId: string, prompt: string, userId?: number, actorId?: ActorId): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
     const agent = this.#agent(projectId);
     if (this.#policy.evaluate(project, "task").kind === "forbidden") {
@@ -196,6 +196,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         run.events,
         operation.controller.signal,
         userId,
+        actorId,
       );
       // A completed agent turn must not be reported as failed because a
       // best-effort post-run Git snapshot could not be collected.
@@ -328,7 +329,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
   }
 
   /** Sends an answer only to the pending question in the same project thread. */
-  public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number): Promise<TaskRecord> {
+  public async answerQuestion(projectId: string, questionId: string, answer: string, userId?: number, actorId?: ActorId): Promise<TaskRecord> {
     const project = this.#projects.require(projectId);
     const agent = this.#agent(projectId);
     if (this.#activeOperations.has(projectId)) {
@@ -365,6 +366,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         run.events,
         operation.controller.signal,
         userId,
+        actorId,
       );
       const after = await this.#captureGitSnapshot(project.path);
       const git = createGitTaskSnapshot(before, after);
@@ -532,6 +534,7 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
     events: AsyncIterable<AgentEvent>,
     signal: AbortSignal,
     userId?: number,
+    actorId?: ActorId,
   ): Promise<AgentTerminalEvent | AgentQuestionEvent> {
     if (signal.aborted) return this.#recordStoppedEvent(session, runId);
     let terminalEvent: AgentTerminalEvent | AgentQuestionEvent | undefined;
@@ -551,8 +554,9 @@ export class AgentManager implements ProjectOperationCoordinator, ProjectOperati
         continue;
       }
 
-      const ownedEvent: AgentEvent = event.ownerActorId === undefined && userId !== undefined
-        ? { ...event, ownerActorId: telegramActorId(userId), originActorId: telegramActorId(userId) }
+      const ownerActorId = actorId ?? (userId === undefined ? undefined : telegramActorId(userId));
+      const ownedEvent: AgentEvent = event.ownerActorId === undefined && ownerActorId !== undefined
+        ? { ...event, ownerActorId, originActorId: ownerActorId }
         : event;
       terminalEvent = this.#applyEvent(session, ownedEvent) ?? terminalEvent;
       this.#updateSnapshot(session, {

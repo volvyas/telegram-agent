@@ -1,0 +1,3 @@
+interface:
+  display_name: "Gateway Live Acceptance"
+  short_description: "Run sanitized gateway live acceptance checks"

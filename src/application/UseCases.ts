@@ -24,7 +24,7 @@ export interface ApplicationUseCases {
   };
   readonly test: { run(actor: ActorContext, projectId: string): Promise<unknown> };
   readonly confirmations: {
-    request(actor: ActorContext, projectId: string, operation: string): Promise<unknown>;
-    consume(actor: ActorContext, id: string, projectId: string, decision: "allow" | "deny"): Promise<unknown>;
+    request(actor: ActorContext, projectId: string, operation: string, payload: unknown): Promise<unknown>;
+    consume(actor: ActorContext, id: string, projectId: string, operation: string, payload: unknown, decision: "allow" | "deny"): Promise<unknown>;
   };
 }

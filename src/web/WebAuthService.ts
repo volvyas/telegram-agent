@@ -23,6 +23,14 @@ export class WebAuthService {
   }
   public logout(sessionId: string): void { this.#sessions.revoke(sessionId); }
   public session(sessionId: string): WebSession | undefined { return this.#sessions.get(sessionId); }
+  public async reauthenticate(sessionId: string, source: string, password: string): Promise<boolean> {
+    const session = this.#sessions.get(sessionId); if (session === undefined) return false;
+    const result = await this.login(source, password);
+    if (!result.ok) return false;
+    if (result.session !== undefined) this.#sessions.revoke(result.session.id);
+    this.#sessions.markAuthenticated(sessionId);
+    return true;
+  }
   public revokeAll(): void { this.#sessions.revokeAll(); }
 }
 

@@ -2,11 +2,11 @@
 
 ## DEV-080 — Web-only acceptance
 
-Status: **PARTIAL — host-level Web-only smoke passed; operator browser and live
-agent-flow evidence remain.** The deployment examples and Web-only environment contract are in
+Status: **PARTIAL — Web-only loopback and private-LAN host smoke passed; operator
+login/browser and live agent-flow evidence remain.** The deployment examples and Web-only environment contract are in
 `README.md`, `.env.example` and `docs/environment.md`. Use a disposable
 Web-only process with `TELEGRAM_ENABLED=false`, `WEB_ENABLED=true`, a generated
-password verifier and either loopback development HTTP or a real HTTPS direct /
+password verifier and either loopback/private-LAN development HTTP or a real HTTPS direct /
 trusted reverse-proxy setup. Do not record passwords, cookies, CSRF values,
 private keys, tokens, full repository paths or raw agent output.
 
@@ -31,11 +31,21 @@ Host-level smoke evidence, 2026-10-08:
 | Check | Result |
 | --- | --- |
 | Web-only process with `TELEGRAM_ENABLED=false` | PASS — listener started without Telegram transport |
+| Development bind on `0.0.0.0` for private LAN testing | PASS — listener accepted the configured private-LAN Host and rejected a mismatched Host |
 | `GET /health` | PASS — bounded `{"status":"ok"}` response |
 | `GET /` | PASS — local dashboard HTML served |
 | Security headers | PASS — CSP, no-store, nosniff, frame denial, referrer and permissions policies observed |
+| Wrong Host / Origin | PASS — `400` / `403` |
+| Unauthenticated API/SSE | PASS — `401` |
+| Wrong password | PASS — `401` with no session accepted |
 | Real operator login/session | Pending — requires the operator’s configured password |
 | Real Codex task/progress/question/answer flow | Pending — requires browser and live model session |
+
+The private-LAN run used a temporary port and was stopped cleanly. The actual
+LAN address is intentionally omitted from this record. For LAN development
+testing, set `WEB_HOST=0.0.0.0`, set `WEB_PUBLIC_URL` to the gateway host's
+private address, and restrict the port with the host firewall; do not expose it
+to the public Internet.
 
 The focused security command currently has one sandbox-only regression: the
 child-Node stdout fixture in `SecurityRegression.test.ts` returns empty output

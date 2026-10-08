@@ -5,6 +5,7 @@ export interface WebSession {
   readonly securityContextId: string;
   readonly csrfToken: string;
   readonly createdAt: number;
+  lastAuthenticatedAt: number;
   lastSeenAt: number;
 }
 
@@ -20,7 +21,7 @@ export class WebSessionStore {
   public create(): WebSession {
     this.cleanup();
     if (this.#sessions.size >= this.#maxSessions) throw new Error("Web session limit reached");
-    const now = this.#now(); const session = { id: randomBytes(32).toString("base64url"), securityContextId: randomBytes(24).toString("base64url"), csrfToken: randomBytes(32).toString("base64url"), createdAt: now, lastSeenAt: now };
+    const now = this.#now(); const session = { id: randomBytes(32).toString("base64url"), securityContextId: randomBytes(24).toString("base64url"), csrfToken: randomBytes(32).toString("base64url"), createdAt: now, lastAuthenticatedAt: now, lastSeenAt: now };
     this.#sessions.set(session.id, session); return session;
   }
   public get(id: string): WebSession | undefined {
@@ -30,6 +31,7 @@ export class WebSessionStore {
   }
   public revoke(id: string): void { this.#sessions.delete(id); }
   public revokeAll(): void { this.#sessions.clear(); }
+  public markAuthenticated(id: string): void { const session = this.#sessions.get(id); if (session !== undefined) session.lastAuthenticatedAt = this.#now(); }
   public cleanup(): void { for (const session of this.#sessions.values()) if (this.#now() - session.lastSeenAt > this.#idleTtlMs || this.#now() - session.createdAt > this.#absoluteTtlMs) this.#sessions.delete(session.id); }
   public get size(): number { return this.#sessions.size; }
 }

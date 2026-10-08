@@ -1,0 +1,3 @@
+interface:
+  display_name: "Gateway Security Review"
+  short_description: "Review gateway security boundaries and regressions"

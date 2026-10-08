@@ -82,8 +82,10 @@ WEB_TLS_MODE=direct
 WEB_PASSWORD_HASH=<output of npm run generate:web-password-hash>
 ```
 
-Development HTTP is restricted to loopback and must never be exposed through a
-firewall or public proxy. Production requires `WEB_PUBLIC_URL=https://...`.
+Development HTTP may bind a private LAN interface for explicitly authorized
+local-device testing. Set `WEB_PUBLIC_URL` to that private address, restrict
+the port with the host firewall, and never expose it through a public proxy or
+the public Internet. Production requires `WEB_PUBLIC_URL=https://...`.
 Direct mode reads `WEB_TLS_CERT_PATH` and `WEB_TLS_KEY_PATH`; reverse-proxy mode
 must bind loopback or a Unix socket and leaves TLS termination to the explicitly
 trusted HTTPS proxy. Keep `.env`, hashes and private keys owned by the service

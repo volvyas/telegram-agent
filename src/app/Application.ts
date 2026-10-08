@@ -43,6 +43,8 @@ import { WebAuthService } from "../web/WebAuthService.js";
 import { WebSessionStore } from "../web/WebSessionStore.js";
 import { createWebRouteHandler } from "../web/WebRoutes.js";
 import { AgentEventHub } from "../application/AgentEventHub.js";
+import { DEFAULT_OPERATION_POLICY } from "../policy/OperationPolicy.js";
+import { WebConfirmationService } from "../web/WebConfirmationService.js";
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -144,6 +146,7 @@ export class Application {
     ] as const));
     const progressReporter = new ProgressReporter();
     const eventHub = new AgentEventHub();
+    const webConfirmations = new WebConfirmationService();
     const gitService = new GitService();
     const agentManager = new AgentManager((projectId) => {
       const adapter = adapters.get(projectId);
@@ -233,19 +236,22 @@ export class Application {
         select: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => projectManager.require(projectId),
       },
       agent: {
-        status: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => agentManager.getStatus(projectId),
-        startTask: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string, prompt: string) => agentManager.startTask(projectId, prompt) as unknown as Promise<import("../storage/Storage.js").PersistedTaskRecord>,
-        answer: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string, questionId: string, answer: string) => agentManager.answerQuestion(projectId, questionId, answer) as unknown as Promise<import("../storage/Storage.js").PersistedTaskRecord>,
-        stop: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => agentManager.stop(projectId),
+        status: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => { const project = projectManager.require(projectId); requireWebOperation(project, "status"); return agentManager.getStatus(projectId); },
+        startTask: async (actor: import("../domain/Actor.js").ActorContext, projectId: string, prompt: string) => agentManager.startTask(projectId, prompt, undefined, actor.actorId) as unknown as Promise<import("../storage/Storage.js").PersistedTaskRecord>,
+        answer: async (actor: import("../domain/Actor.js").ActorContext, projectId: string, questionId: string, answer: string) => { requireWebOperation(projectManager.require(projectId), "task"); return agentManager.answerQuestion(projectId, questionId, answer, undefined, actor.actorId) as unknown as Promise<import("../storage/Storage.js").PersistedTaskRecord>; },
+        stop: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => { const project = projectManager.require(projectId); requireWebOperation(project, "stop"); return agentManager.stop(projectId); },
         events: async function* () { /* SSE is fed by the process-local event hub. */ },
       },
       git: {
-        status: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => gitService.getStatus(projectManager.require(projectId).path),
-        diff: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => gitService.getDiff(projectManager.require(projectId).path),
-        log: async () => ({ entries: [] }),
+        status: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => { const project = projectManager.require(projectId); requireWebOperation(project, "git"); return gitService.getStatus(project.path); },
+        diff: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => { const project = projectManager.require(projectId); requireWebOperation(project, "diff"); return gitService.getDiff(project.path); },
+        log: async (_actor: import("../domain/Actor.js").ActorContext, projectId: string) => { requireWebOperation(projectManager.require(projectId), "git"); return { entries: [] }; },
       },
       test: { run: async () => ({ status: "not_configured" }) },
-      confirmations: { request: async () => ({ error: "not_configured" }), consume: async () => ({ error: "not_configured" }) },
+      confirmations: {
+        request: async (actor: import("../domain/Actor.js").ActorContext, projectId: string, operation: string, payload: unknown) => { const project = projectManager.require(projectId); requireWebOperation(project, operation); if (!DEFAULT_OPERATION_POLICY.requiresConfirmation(operation)) throw new Error("confirmation_not_required"); return webConfirmations.create(actor, projectId, operation, payload); },
+        consume: async (actor: import("../domain/Actor.js").ActorContext, id: string, projectId: string, operation: string, payload: unknown, decision: "allow" | "deny") => { const project = projectManager.require(projectId); requireWebOperation(project, operation); const confirmation = webConfirmations.consume(id, actor, projectId, operation, payload); return { id: confirmation.id, decision }; },
+      },
     } satisfies import("../application/UseCases.js").ApplicationUseCases;
     const webServer = config.webEnabled && config.web !== undefined
       ? new WebServer({ config: config.web, auth: new WebAuthService(config.web.passwordHash, new WebSessionStore()), staticDirectory: resolve(options.cwd ?? process.cwd(), "src/web/public"), eventHub, requestHandler: createWebRouteHandler(webUseCases) })
@@ -313,4 +319,8 @@ export class Application {
     }
     this.#signalHandlers.clear();
   }
+}
+
+function requireWebOperation(project: import("../config/ProjectConfig.js").ProjectConfig, operation: string): void {
+  if (DEFAULT_OPERATION_POLICY.evaluate(project, operation).kind === "forbidden") throw new Error("operation_not_allowed");
 }

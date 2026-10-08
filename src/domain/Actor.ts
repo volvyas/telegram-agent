@@ -5,6 +5,8 @@ export interface ActorContext {
   readonly actorId: ActorId;
   /** Process-local security context; required for browser-sensitive actions. */
   readonly securityContextId?: string;
+  readonly csrfToken?: string;
+  readonly authenticatedAt?: number;
   readonly origin: "telegram" | "web";
 }
 

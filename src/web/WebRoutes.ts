@@ -7,7 +7,7 @@ const PROJECT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 /** Authenticated same-origin adapter. It accepts only bounded IDs and text. */
 export function createWebRouteHandler(useCases: ApplicationUseCases): (request: WebRouteRequest) => Promise<WebRouteResponse> {
   return async (request) => {
-    const actor: ActorContext = { actorId: "web:operator", origin: "web", securityContextId: request.session.securityContextId };
+    const actor: ActorContext = { actorId: "web:operator", origin: "web", securityContextId: request.session.securityContextId, csrfToken: request.session.csrfToken, authenticatedAt: request.session.lastAuthenticatedAt };
     if (request.method === "GET" && request.path === "/api/projects") return response(200, (await useCases.projects.list(actor)).map((item) => ({ id: item.id, name: item.name, allowedOperations: [...item.allowedOperations], codexHome: item.codexHome === undefined ? "default" : codexIdentifier(item.codexHome) })));
     if (request.method === "POST" && request.path === "/api/projects/select") { const body = object(request.body, ["projectId"]); return response(200, await useCases.projects.select(actor, project(text(body.projectId, 64)))); }
     if (request.method === "GET" && request.path === "/api/status") return response(200, await useCases.agent.status(actor, project(query(request, "projectId"))));
@@ -18,11 +18,23 @@ export function createWebRouteHandler(useCases: ApplicationUseCases): (request: 
     if (request.method === "GET" && request.path === "/api/git/diff") return response(200, await useCases.git.diff(actor, project(query(request, "projectId"))));
     if (request.method === "GET" && request.path === "/api/git/log") return response(200, await useCases.git.log(actor, project(query(request, "projectId"))));
     if (request.method === "POST" && request.path === "/api/test") { const body = object(request.body, ["projectId"]); return response(202, await useCases.test.run(actor, project(text(body.projectId, 64)))); }
+    if (request.method === "POST" && request.path === "/api/confirmations/request") { const body = object(request.body, ["projectId", "operation", "payload"]); return response(200, confirmationView(await useCases.confirmations.request(actor, project(text(body.projectId, 64)), text(body.operation, 64), body.payload))); }
+    if (request.method === "POST" && request.path === "/api/confirmations/consume") { const body = object(request.body, ["id", "projectId", "operation", "payload", "decision"]); const decision = text(body.decision, 5); if (decision !== "allow" && decision !== "deny") throw new Error("invalid_decision"); return response(200, await useCases.confirmations.consume(actor, text(body.id, 64), project(text(body.projectId, 64)), text(body.operation, 64), body.payload, decision)); }
     return response(404, { error: "not_found" });
   };
 }
 
 function response(status: number, body: unknown): WebRouteResponse { return { status, body }; }
+function confirmationView(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return { status: "created" };
+  const record = value as Record<string, unknown>;
+  return {
+    id: typeof record.id === "string" ? record.id : undefined,
+    projectId: typeof record.projectId === "string" ? record.projectId : undefined,
+    operation: typeof record.operation === "string" ? record.operation : undefined,
+    expiresAt: typeof record.expiresAt === "number" ? record.expiresAt : undefined,
+  };
+}
 function taskView(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null) return { outcome: "completed" };
   const record = value as Record<string, unknown>;

@@ -50,7 +50,7 @@ export class WebServer {
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     this.#connections.add(request); this.#responses.add(response); response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"); response.setHeader("X-Content-Type-Options", "nosniff"); response.setHeader("X-Frame-Options", "DENY"); response.setHeader("Referrer-Policy", "no-referrer"); response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()"); response.setHeader("Cache-Control", "no-store"); if (this.#options.config.environment === "production") response.setHeader("Strict-Transport-Security", "max-age=31536000");
     try {
-      const host = request.headers.host; const expected = new URL(this.#options.config.publicUrl).host; if (host !== expected && request.url !== "/health") return send(response, 400, { error: "invalid_host" });
+      const host = request.headers.host; const expected = new URL(this.#options.config.publicUrl).host; if (host !== expected) return send(response, 400, { error: "invalid_host" });
       const url = new URL(request.url ?? "/", this.#options.config.publicUrl); const origin = request.headers.origin;
       if (origin !== undefined && origin !== new URL(this.#options.config.publicUrl).origin) return send(response, 403, { error: "invalid_origin" });
       if (url.pathname === "/health" && request.method === "GET") return send(response, 200, { status: "ok" });
@@ -62,6 +62,7 @@ export class WebServer {
       if (url.pathname === "/api/auth/logout" && request.method === "POST") { if (session) this.#requireCsrf(request, session); if (session) this.#options.auth.logout(session.id); response.setHeader("Set-Cookie", `${this.#cookieName()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict${this.#secureCookie() ? "; Secure" : ""}`); return send(response, 204, undefined, CLEAR_SESSION_HEADERS); }
       if (session === undefined) return send(response, 401, { error: "unauthorized" });
       if (request.method !== "GET") this.#requireCsrf(request, session);
+      if (url.pathname === "/api/auth/reauth" && request.method === "POST") { const body = await readJson(request); const password = isRecord(body) && typeof body.password === "string" ? body.password : ""; const ok = await this.#options.auth.reauthenticate(session.id, request.socket.remoteAddress ?? "unknown", password); return ok ? send(response, 204, undefined) : send(response, 401, { error: "invalid_credentials" }); }
       if (url.pathname === "/api/auth/me" && request.method === "GET") return send(response, 200, { actor: "web:operator", csrfToken: session.csrfToken });
       if (url.pathname === "/events" && request.method === "GET") return this.#sse(response, session, url.searchParams.get("projectId"));
       if (this.#options.requestHandler !== undefined) { const body = await readJson(request); const result = await this.#options.requestHandler({ method: request.method ?? "GET", path: url.pathname, query: url.searchParams, session, body, origin }); return send(response, result.status, result.body, result.headers); }
